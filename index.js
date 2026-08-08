@@ -137,88 +137,51 @@ async function limpiarPantallaWhatsApp(page) {
 }
 
 /**
- * Busca un grupo inspeccionando los elementos del DOM en la zona de búsqueda
+ * Busca un grupo enfocando directamente el elemento <INPUT role="textbox"> de la barra de búsqueda
  */
 async function buscarGrupoPorNombreSeguro(client, targetGroupName) {
     const page = client.pupPage;
 
-    console.log(`    ↳ Esperando a que el panel lateral de chats esté renderizado...`);
+    const searchSelector = 'input[aria-label="Search or start a new chat"], input[role="textbox"], input.html-input';
+
+    console.log(`    ↳ Esperando a que el elemento <input> de búsqueda esté listo...`);
     try {
-        await page.waitForSelector('#pane-side, #side, div[contenteditable="true"]', { timeout: 20000 });
-    } catch (e) {}
+        await page.waitForSelector(searchSelector, { timeout: 20000 });
+    } catch (e) {
+        console.warn('    ↳ Tiempo de espera agotado buscando el selector del input.');
+    }
 
     await limpiarPantallaWhatsApp(page);
 
-    console.log(`    ↳ Inspeccionando los elementos DOM del cuadro de búsqueda...`);
-
-    const searchElementsInfo = await page.evaluate(() => {
-        const results = [];
-        const elements = document.querySelectorAll('*');
-        for (const el of elements) {
-            const rect = el.getBoundingClientRect();
-            if (rect.left > 80 && rect.right < 550 && rect.top > 30 && rect.bottom < 110 && rect.width > 100) {
-                results.push({
-                    tag: el.tagName,
-                    class: el.className,
-                    ariaLabel: el.getAttribute('aria-label'),
-                    role: el.getAttribute('role'),
-                    contenteditable: el.getAttribute('contenteditable'),
-                    text: el.innerText ? el.innerText.substring(0, 30) : ''
-                });
-            }
-        }
-        return results;
-    });
-
-    console.log('    [DIAGNÓSTICO DOM] Elementos en zona de búsqueda:');
-    (searchElementsInfo || []).forEach(e => {
-        console.log(`      - <${e.tag}> role="${e.role}" ariaLabel="${e.ariaLabel}" text="${e.text}" class="${e.class.substring(0, 40)}"`);
-    });
-
     try {
-        // Hacer clic e intentar enfocar cualquier elemento de la zona de búsqueda
-        await page.evaluate(() => {
-            const elements = Array.from(document.querySelectorAll('*'));
-            for (const el of elements) {
-                const rect = el.getBoundingClientRect();
-                if (rect.left > 80 && rect.right < 550 && rect.top > 30 && rect.bottom < 110 && rect.width > 100) {
-                    if (el.tagName === 'DIV' || el.tagName === 'INPUT' || el.tagName === 'P' || el.tagName === 'LABEL') {
-                        try { el.click(); } catch(e) {}
-                        if (el.focus) el.focus();
-                    }
-                }
-            }
-        });
+        const inputHandle = await page.$(searchSelector);
+        if (inputHandle) {
+            console.log(`    ↳ Selector <input> localizado. Haciendo clic e ingresando "${targetGroupName}"...`);
+            await inputHandle.click();
+            await new Promise(r => setTimeout(r, 300));
 
-        await page.mouse.click(250, 70);
-        await new Promise(r => setTimeout(r, 500));
+            // Limpiar contenido anterior
+            await page.keyboard.down('Meta');
+            await page.keyboard.press('A');
+            await page.keyboard.up('Meta');
+            await page.keyboard.press('Backspace');
+            await new Promise(r => setTimeout(r, 200));
 
-        // Pulsar shortcut de búsqueda de WhatsApp (Cmd+F / Ctrl+F o /)
-        await page.keyboard.down('Meta');
-        await page.keyboard.press('F');
-        await page.keyboard.up('Meta');
-        await new Promise(r => setTimeout(r, 300));
+            // Escribir directamente sobre el campo de texto
+            await inputHandle.type(targetGroupName, { delay: 70 });
+            console.log(`    ↳ Búsqueda "${targetGroupName}" escrita con éxito en el input. Esperando 4s...`);
 
-        // Limpiar cualquier contenido existente
-        await page.keyboard.down('Meta');
-        await page.keyboard.press('A');
-        await page.keyboard.up('Meta');
-        await page.keyboard.press('Backspace');
-        await new Promise(r => setTimeout(r, 200));
-
-        // Escribir el nombre del grupo
-        await page.keyboard.type(targetGroupName, { delay: 80 });
-        console.log(`    ↳ Búsqueda "${targetGroupName}" enviada por teclado. Esperando 4s...`);
-
-        await new Promise(r => setTimeout(r, 4000));
-
-        // Capturar pantalla tras la búsqueda
-        const screenPath = path.resolve('./whatsapp_screen.png');
-        try { await page.screenshot({ path: screenPath }); } catch (e) {}
-
+            await new Promise(r => setTimeout(r, 4000));
+        } else {
+            console.warn('    ↳ No se pudo obtener el handle del elemento input.');
+        }
     } catch (err) {
-        console.warn('    ↳ Advertencia interactuando con el buscador UI:', err.message);
+        console.warn('    ↳ Advertencia interactuando con el input de búsqueda:', err.message);
     }
+
+    // Tomar captura de pantalla tras la búsqueda
+    const screenPath = path.resolve('./whatsapp_screen.png');
+    try { await page.screenshot({ path: screenPath }); } catch (e) {}
 
     // Inspeccionar los chats en Store.Chat tras realizar la búsqueda
     const result = await page.evaluate((targetName) => {
