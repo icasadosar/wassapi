@@ -110,75 +110,101 @@ function cargarContactosDesdeCSV(filePath) {
 }
 
 /**
- * Busca un grupo de forma segura directamente en el cliente Puppeteer evitando el fallo r: r de getChats()
+ * Busca un grupo de forma ultra-segura inspeccionando window.Store de WhatsApp Web
  */
 async function buscarGrupoPorNombreSeguro(client, targetGroupName) {
     const page = client.pupPage;
 
-    // Esperar a que el Store de WhatsApp Web esté listo
-    await page.waitForFunction(() => window.Store && window.Store.Chat, { timeout: 15000 });
+    const groupData = await page.evaluate(async (targetName) => {
+        const normTarget = targetName.trim().toLowerCase();
 
-    const groupData = await page.evaluate((targetName) => {
-        try {
-            const normTarget = targetName.trim().toLowerCase();
-            const chatModels = (window.Store.Chat.getModelsArray ? window.Store.Chat.getModelsArray() : window.Store.Chat.models) || [];
-
-            for (const chat of chatModels) {
-                try {
-                    const isGroup = chat.isGroup || (chat.id && chat.id.server === 'g.us');
-                    const name = chat.name || chat.formattedTitle || chat.title || (chat.contact ? chat.contact.name : '') || '';
-
-                    if (isGroup && name.trim().toLowerCase() === normTarget) {
-                        let participants = [];
-                        if (chat.groupMetadata && chat.groupMetadata.participants) {
-                            const rawParticipants = chat.groupMetadata.participants.getModelsArray ? 
-                                chat.groupMetadata.participants.getModelsArray() : chat.groupMetadata.participants;
-
-                            participants = rawParticipants.map(p => {
-                                let idStr = '';
-                                if (p.id) {
-                                    idStr = typeof p.id === 'string' ? p.id : (p.id._serialized || `${p.id.user}@c.us`);
-                                }
-                                return { id: { _serialized: idStr } };
-                            });
-                        }
-
-                        const chatId = typeof chat.id === 'string' ? chat.id : (chat.id._serialized || `${chat.id.user}@g.us`);
-
-                        return {
-                            id: chatId,
-                            name: name,
-                            participants: participants
-                        };
-                    }
-                } catch (e) {
-                    // Ignorar errores en chats individuales corruptos o tipos desconocidos
+        // Intentar hasta 30 veces (15 segundos) esperando a que WhatsApp Web inicialice el Store
+        for (let attempt = 0; attempt < 30; attempt++) {
+            try {
+                let chatStore = window.Store && window.Store.Chat;
+                
+                if (!chatStore && typeof window.require === 'function') {
+                    try {
+                        const ChatColl = window.require('WAWebChatCollection');
+                        chatStore = ChatColl ? (ChatColl.Chat || ChatColl.default) : null;
+                    } catch (e) {}
                 }
+
+                if (chatStore) {
+                    const chatModels = chatStore.getModelsArray ? chatStore.getModelsArray() : (chatStore.models || []);
+
+                    for (const chat of chatModels) {
+                        try {
+                            const isGroup = chat.isGroup || (chat.id && chat.id.server === 'g.us');
+                            const name = chat.name || chat.formattedTitle || chat.title || (chat.contact ? chat.contact.name : '') || '';
+
+                            if (isGroup && name.trim().toLowerCase() === normTarget) {
+                                let participants = [];
+                                if (chat.groupMetadata && chat.groupMetadata.participants) {
+                                    const rawParts = chat.groupMetadata.participants.getModelsArray ?
+                                        chat.groupMetadata.participants.getModelsArray() : chat.groupMetadata.participants;
+
+                                    participants = rawParts.map(p => {
+                                        let idStr = '';
+                                        if (p.id) {
+                                            idStr = typeof p.id === 'string' ? p.id : (p.id._serialized || `${p.id.user}@c.us`);
+                                        }
+                                        return { id: { _serialized: idStr } };
+                                    });
+                                }
+
+                                const chatId = typeof chat.id === 'string' ? chat.id : (chat.id._serialized || `${chat.id.user}@g.us`);
+
+                                return {
+                                    id: chatId,
+                                    name: name,
+                                    participants: participants
+                                };
+                            }
+                        } catch (err) {
+                            // Ignorar chats individuales incompatibles
+                        }
+                    }
+                }
+            } catch (err) {
+                // Reintentar en la siguiente vuelta
             }
-        } catch (e) {
-            console.error('Error buscando en Store.Chat:', e);
+            await new Promise(r => setTimeout(r, 500));
         }
+
         return null;
     }, targetGroupName);
 
-    if (!groupData) return null;
+    if (groupData) {
+        return {
+            name: groupData.name,
+            isGroup: true,
+            id: { _serialized: groupData.id },
+            participants: groupData.participants,
+            addParticipants: async (jids) => {
+                return await page.evaluate(async (chatId, participantJids) => {
+                    if (window.WWebJS && window.WWebJS.group && window.WWebJS.group.addParticipants) {
+                        return await window.WWebJS.group.addParticipants(chatId, participantJids);
+                    } else {
+                        const groupChat = window.Store.Chat.get(chatId);
+                        return await groupChat.groupMetadata.participants.add(participantJids);
+                    }
+                }, groupData.id, jids);
+            }
+        };
+    }
 
-    return {
-        name: groupData.name,
-        isGroup: true,
-        id: { _serialized: groupData.id },
-        participants: groupData.participants,
-        addParticipants: async (jids) => {
-            return await page.evaluate(async (chatId, participantJids) => {
-                if (window.WWebJS && window.WWebJS.group && window.WWebJS.group.addParticipants) {
-                    return await window.WWebJS.group.addParticipants(chatId, participantJids);
-                } else {
-                    const groupChat = window.Store.Chat.get(chatId);
-                    return await groupChat.groupMetadata.participants.add(participantJids);
-                }
-            }, groupData.id, jids);
-        }
-    };
+    // Fallback: Intentar usar client.getChats() con try/catch como respaldo
+    try {
+        console.log('    ↳ Búsqueda directa completada. Probando método secundario con getChats()...');
+        const chats = await client.getChats();
+        const fallbackGroup = chats.find(c => c.isGroup && c.name.trim().toLowerCase() === targetGroupName.trim().toLowerCase());
+        if (fallbackGroup) return fallbackGroup;
+    } catch (e) {
+        console.warn('    ↳ El método secundario getChats() falló:', e.message);
+    }
+
+    return null;
 }
 
 // Inicializar cliente de WhatsApp Web
