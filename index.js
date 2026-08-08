@@ -81,7 +81,6 @@ function cargarContactosDesdeCSV(filePath) {
                 const surname = (row[PLAYER_SURNAME_COLUMN] || '').trim();
                 const team = (row[PLAYER_TEAM_COLUMN] || '').trim();
 
-                // Construcción de nombres específicos
                 const whatsappName = tutor;
                 
                 let googleName = '';
@@ -114,9 +113,30 @@ function cargarContactosDesdeCSV(filePath) {
     });
 }
 
-// Inicializar cliente de WhatsApp Web con persistencia de sesión local
+/**
+ * Obtiene la lista de chats con reintentos para evitar errores de sincronización con la versión de WhatsApp Web
+ */
+async function obtenerChatsConReintentos(client, retries = 3, delayMs = 3000) {
+    for (let i = 1; i <= retries; i++) {
+        try {
+            await new Promise(r => setTimeout(r, delayMs));
+            const chats = await client.getChats();
+            if (chats && chats.length >= 0) return chats;
+        } catch (err) {
+            console.warn(`[ADVERTENCIA] Error al obtener la lista de chats (intento ${i}/${retries}): ${err.message}`);
+            if (i === retries) throw err;
+        }
+    }
+    return [];
+}
+
+// Inicializar cliente de WhatsApp Web con caché de versión estable
 const client = new Client({
     authStrategy: new LocalAuth(),
+    webVersionCache: {
+        type: 'remote',
+        remotePath: 'https://raw.githubusercontent.com/wppconnect-team/wa-version/main/html/2.3000.1018940474-alpha.html',
+    },
     puppeteer: {
         headless: true,
         args: [
@@ -180,7 +200,7 @@ client.on('ready', async () => {
 
         // 2. Buscar el grupo de WhatsApp por su nombre
         console.log(`Buscando grupo: "${GROUP_NAME}"...`);
-        const chats = await client.getChats();
+        const chats = await obtenerChatsConReintentos(client);
         const grupo = chats.find(c => c.isGroup && c.name.trim().toLowerCase() === GROUP_NAME.trim().toLowerCase());
 
         if (!grupo) {
