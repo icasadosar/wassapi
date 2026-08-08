@@ -42,17 +42,13 @@ function randomDelay(min, max) {
 function normalizarTelefono(rawPhone) {
     if (!rawPhone) return null;
 
-    // Eliminar todo lo que no sea dígito
     let clean = rawPhone.toString().replace(/\D/g, '');
-
     if (!clean) return null;
 
-    // Si el número empieza por 0034, eliminar los ceros iniciales
     if (clean.startsWith('0034')) {
         clean = clean.substring(2);
     }
 
-    // Si el número tiene 9 dígitos (formato local en España), anteponer prefijo por defecto
     if (clean.length === 9 && DEFAULT_COUNTRY_CODE) {
         clean = `${DEFAULT_COUNTRY_CODE}${clean}`;
     }
@@ -114,29 +110,80 @@ function cargarContactosDesdeCSV(filePath) {
 }
 
 /**
- * Obtiene la lista de chats con reintentos para evitar errores de sincronización con la versión de WhatsApp Web
+ * Busca un grupo de forma segura directamente en el cliente Puppeteer evitando el fallo r: r de getChats()
  */
-async function obtenerChatsConReintentos(client, retries = 3, delayMs = 3000) {
-    for (let i = 1; i <= retries; i++) {
+async function buscarGrupoPorNombreSeguro(client, targetGroupName) {
+    const page = client.pupPage;
+
+    // Esperar a que el Store de WhatsApp Web esté listo
+    await page.waitForFunction(() => window.Store && window.Store.Chat, { timeout: 15000 });
+
+    const groupData = await page.evaluate((targetName) => {
         try {
-            await new Promise(r => setTimeout(r, delayMs));
-            const chats = await client.getChats();
-            if (chats && chats.length >= 0) return chats;
-        } catch (err) {
-            console.warn(`[ADVERTENCIA] Error al obtener la lista de chats (intento ${i}/${retries}): ${err.message}`);
-            if (i === retries) throw err;
+            const normTarget = targetName.trim().toLowerCase();
+            const chatModels = (window.Store.Chat.getModelsArray ? window.Store.Chat.getModelsArray() : window.Store.Chat.models) || [];
+
+            for (const chat of chatModels) {
+                try {
+                    const isGroup = chat.isGroup || (chat.id && chat.id.server === 'g.us');
+                    const name = chat.name || chat.formattedTitle || chat.title || (chat.contact ? chat.contact.name : '') || '';
+
+                    if (isGroup && name.trim().toLowerCase() === normTarget) {
+                        let participants = [];
+                        if (chat.groupMetadata && chat.groupMetadata.participants) {
+                            const rawParticipants = chat.groupMetadata.participants.getModelsArray ? 
+                                chat.groupMetadata.participants.getModelsArray() : chat.groupMetadata.participants;
+
+                            participants = rawParticipants.map(p => {
+                                let idStr = '';
+                                if (p.id) {
+                                    idStr = typeof p.id === 'string' ? p.id : (p.id._serialized || `${p.id.user}@c.us`);
+                                }
+                                return { id: { _serialized: idStr } };
+                            });
+                        }
+
+                        const chatId = typeof chat.id === 'string' ? chat.id : (chat.id._serialized || `${chat.id.user}@g.us`);
+
+                        return {
+                            id: chatId,
+                            name: name,
+                            participants: participants
+                        };
+                    }
+                } catch (e) {
+                    // Ignorar errores en chats individuales corruptos o tipos desconocidos
+                }
+            }
+        } catch (e) {
+            console.error('Error buscando en Store.Chat:', e);
         }
-    }
-    return [];
+        return null;
+    }, targetGroupName);
+
+    if (!groupData) return null;
+
+    return {
+        name: groupData.name,
+        isGroup: true,
+        id: { _serialized: groupData.id },
+        participants: groupData.participants,
+        addParticipants: async (jids) => {
+            return await page.evaluate(async (chatId, participantJids) => {
+                if (window.WWebJS && window.WWebJS.group && window.WWebJS.group.addParticipants) {
+                    return await window.WWebJS.group.addParticipants(chatId, participantJids);
+                } else {
+                    const groupChat = window.Store.Chat.get(chatId);
+                    return await groupChat.groupMetadata.participants.add(participantJids);
+                }
+            }, groupData.id, jids);
+        }
+    };
 }
 
-// Inicializar cliente de WhatsApp Web con caché de versión estable
+// Inicializar cliente de WhatsApp Web
 const client = new Client({
     authStrategy: new LocalAuth(),
-    webVersionCache: {
-        type: 'remote',
-        remotePath: 'https://raw.githubusercontent.com/wppconnect-team/wa-version/main/html/2.3000.1018940474-alpha.html',
-    },
     puppeteer: {
         headless: true,
         args: [
@@ -198,10 +245,9 @@ client.on('ready', async () => {
         stats.totalCSV = contactos.length;
         console.log(`Se encontraron ${contactos.length} contactos válidos en el CSV.\n`);
 
-        // 2. Buscar el grupo de WhatsApp por su nombre
+        // 2. Buscar el grupo de WhatsApp de forma segura
         console.log(`Buscando grupo: "${GROUP_NAME}"...`);
-        const chats = await obtenerChatsConReintentos(client);
-        const grupo = chats.find(c => c.isGroup && c.name.trim().toLowerCase() === GROUP_NAME.trim().toLowerCase());
+        const grupo = await buscarGrupoPorNombreSeguro(client, GROUP_NAME);
 
         if (!grupo) {
             console.error(`\n[ERROR CRÍTICO] No se encontró el grupo "${GROUP_NAME}". Verifique el nombre en .env`);
