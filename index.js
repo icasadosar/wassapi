@@ -137,7 +137,7 @@ async function limpiarPantallaWhatsApp(page) {
 }
 
 /**
- * Busca un grupo escribiendo en el <input> de búsqueda, seleccionándolo y extrayendo los participantes
+ * Busca un grupo en WhatsApp Web y extrae sus metadatos del objeto del chat
  */
 async function buscarGrupoPorNombreSeguro(client, targetGroupName) {
     const page = client.pupPage;
@@ -171,7 +171,6 @@ async function buscarGrupoPorNombreSeguro(client, targetGroupName) {
 
             console.log(`    ↳ Abriendo el chat del grupo "${targetGroupName}"...`);
             
-            // Pulsar Enter y hacer clic en la fila del chat para abrir el panel derecho del grupo
             await page.keyboard.press('Enter');
             await new Promise(r => setTimeout(r, 1000));
 
@@ -193,17 +192,50 @@ async function buscarGrupoPorNombreSeguro(client, targetGroupName) {
     const screenPath = path.resolve('./whatsapp_screen.png');
     try { await page.screenshot({ path: screenPath }); } catch (e) {}
 
-    // Inspeccionar los chats en Store.Chat incluyendo el chat activo abierto en el panel derecho
+    // Inspeccionar la memoria activa de Store.Chat
+    const debugStoreInfo = await page.evaluate(() => {
+        const info = {
+            hasStore: !!window.Store,
+            hasChat: !!(window.Store && window.Store.Chat),
+            activeChat: null,
+            chats: []
+        };
+
+        if (window.Store && window.Store.Chat) {
+            if (window.Store.Chat.getActive) {
+                const active = window.Store.Chat.getActive();
+                if (active) {
+                    let aName = active.name || active.formattedTitle || active.title || (active.contact ? active.contact.name : '') || '';
+                    info.activeChat = {
+                        id: active.id ? (active.id._serialized || active.id) : null,
+                        name: aName,
+                        isGroup: active.isGroup || (active.id && active.id.server === 'g.us'),
+                        hasMetadata: !!active.groupMetadata
+                    };
+                }
+            }
+
+            const allChats = window.Store.Chat.getModelsArray ? window.Store.Chat.getModelsArray() : (window.Store.Chat.models || []);
+            info.chats = allChats.map(c => ({
+                id: c.id ? (c.id._serialized || c.id) : null,
+                name: c.name || c.formattedTitle || c.title || '',
+                isGroup: c.isGroup || (c.id && c.id.server === 'g.us')
+            }));
+        }
+        return info;
+    });
+
+    console.log('    [DIAGNÓSTICO STORE] Estado de Store.Chat:', JSON.stringify(debugStoreInfo, null, 2));
+
+    // Evaluar la búsqueda del grupo
     const result = await page.evaluate((targetName) => {
         const normTarget = targetName.trim().toLowerCase();
-        const debugInfo = [];
         let foundGroup = null;
 
         let chats = [];
         if (window.Store && window.Store.Chat) {
             chats = window.Store.Chat.getModelsArray ? window.Store.Chat.getModelsArray() : (window.Store.Chat.models || []);
             
-            // Incluir prioritariamente el chat activo en pantalla (Store.Chat.getActive())
             if (window.Store.Chat.getActive) {
                 const active = window.Store.Chat.getActive();
                 if (active) {
@@ -220,12 +252,12 @@ async function buscarGrupoPorNombreSeguro(client, targetGroupName) {
 
             const isGroup = chat.isGroup || (chat.id && chat.id.server === 'g.us') || (chat.id && typeof chat.id === 'string' && chat.id.includes('g.us'));
 
-            if (isGroup || (chat.id && chat.id.server === 'g.us')) {
-                debugInfo.push({ name: name || 'GroupWithoutName', id: chat.id ? (chat.id._serialized || chat.id) : 'unknown' });
+            if (isGroup) {
+                // Coincidencia por nombre o si es un ID de grupo activo g.us
+                const nameMatches = name && name.trim().toLowerCase().includes(normTarget.substring(0, 8));
+                const isGroupServer = chat.id && (chat.id.server === 'g.us' || (typeof chat.id === 'string' && chat.id.includes('g.us')));
 
-                const isMatch = (name && name.trim().toLowerCase() === normTarget) || (chat.id && chat.id.server === 'g.us');
-
-                if (isMatch) {
+                if (nameMatches || isGroupServer) {
                     let participants = [];
                     try {
                         if (chat.groupMetadata && chat.groupMetadata.participants) {
@@ -253,21 +285,15 @@ async function buscarGrupoPorNombreSeguro(client, targetGroupName) {
             }
         }
 
-        return { foundGroup, debugInfo };
+        return foundGroup;
     }, targetGroupName);
 
-    if (result && result.debugInfo && result.debugInfo.length > 0) {
-        console.log('    [DIAGNÓSTICO] Grupos detectados en memoria activa:');
-        result.debugInfo.forEach(g => console.log(`      - "${g.name}" (ID: ${g.id})`));
-    }
-
-    if (result && result.foundGroup) {
-        const g = result.foundGroup;
+    if (result) {
         return {
-            name: g.name,
+            name: result.name,
             isGroup: true,
-            id: { _serialized: g.id },
-            participants: g.participants,
+            id: { _serialized: result.id },
+            participants: result.participants,
             addParticipants: async (jids) => {
                 return await page.evaluate(async (chatId, participantJids) => {
                     if (window.WWebJS && window.WWebJS.group && window.WWebJS.group.addParticipants) {
@@ -276,7 +302,7 @@ async function buscarGrupoPorNombreSeguro(client, targetGroupName) {
                         const groupChat = window.Store.Chat.get(chatId);
                         return await groupChat.groupMetadata.participants.add(participantJids);
                     }
-                }, g.id, jids);
+                }, result.id, jids);
             }
         };
     }
