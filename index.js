@@ -110,109 +110,109 @@ function cargarContactosDesdeCSV(filePath) {
 }
 
 /**
- * Busca un grupo mediante el buscador nativo de WhatsApp Web y de respaldo en window.Store
+ * Busca un grupo mediante WWebJS.searchChats y Store.Search dentro del contexto del navegador
  */
 async function buscarGrupoPorNombreSeguro(client, targetGroupName) {
     const page = client.pupPage;
 
-    // 1. Cerrar visores de media o pantallas flotantes con Escape
+    // 1. Cerrar visores multimedia o modales con Escape
     try {
         for (let i = 0; i < 3; i++) {
             await page.keyboard.press('Escape');
-            await new Promise(r => setTimeout(r, 300));
+            await new Promise(r => setTimeout(r, 200));
         }
     } catch (e) {}
 
-    // 2. Intentar buscar con el método nativo searchChats de whatsapp-web.js
-    try {
-        console.log(`    ↳ Buscando "${targetGroupName}" con el buscador nativo de WhatsApp...`);
-        const searchResults = await client.searchChats(targetGroupName);
-        if (searchResults && searchResults.length > 0) {
-            const match = searchResults.find(c => c.isGroup && c.name.trim().toLowerCase() === targetGroupName.trim().toLowerCase());
-            if (match) {
-                console.log(`    ↳ ¡Grupo encontrado exitosamente! (${match.name})`);
-                return match;
+    console.log(`    ↳ Buscando "${targetGroupName}" en la API interna de WhatsApp Web...`);
+
+    const result = await page.evaluate(async (targetName) => {
+        const normTarget = targetName.trim().toLowerCase();
+
+        // 2. Forzar búsqueda a través de WWebJS.searchChats o Store.Search
+        try {
+            if (window.WWebJS && window.WWebJS.searchChats) {
+                await window.WWebJS.searchChats(targetName);
+            } else if (window.Store && window.Store.Search && window.Store.Search.search) {
+                await window.Store.Search.search(targetName);
+            }
+        } catch (e) {}
+
+        // Esperar 1.5s a que los resultados se asienten en el Store de chats
+        await new Promise(r => setTimeout(r, 1500));
+
+        let chats = [];
+        if (window.Store && window.Store.Chat) {
+            chats = window.Store.Chat.getModelsArray ? window.Store.Chat.getModelsArray() : (window.Store.Chat.models || []);
+        }
+
+        const debugInfo = [];
+        let foundGroup = null;
+
+        for (const chat of chats) {
+            let name = '';
+            try {
+                name = chat.name || chat.formattedTitle || chat.title || (chat.contact ? (chat.contact.name || chat.contact.pushname) : '') || '';
+            } catch (e) {}
+
+            const isGroup = chat.isGroup || (chat.id && chat.id.server === 'g.us') || (chat.id && typeof chat.id === 'string' && chat.id.includes('g.us'));
+
+            if (isGroup) {
+                debugInfo.push({ name, id: chat.id ? (chat.id._serialized || chat.id) : 'unknown' });
+
+                if (name && name.trim().toLowerCase() === normTarget) {
+                    let participants = [];
+                    try {
+                        if (chat.groupMetadata && chat.groupMetadata.participants) {
+                            const rawParts = chat.groupMetadata.participants.getModelsArray ?
+                                chat.groupMetadata.participants.getModelsArray() : chat.groupMetadata.participants;
+
+                            participants = (rawParts || []).map(p => {
+                                let idStr = '';
+                                if (p && p.id) {
+                                    idStr = typeof p.id === 'string' ? p.id : (p.id._serialized || `${p.id.user}@c.us`);
+                                }
+                                return { id: { _serialized: idStr } };
+                            });
+                        }
+                    } catch (pe) {}
+
+                    const chatId = typeof chat.id === 'string' ? chat.id : (chat.id._serialized || `${chat.id.user}@g.us`);
+                    foundGroup = {
+                        id: chatId,
+                        name: name,
+                        participants: participants
+                    };
+                    break;
+                }
             }
         }
-    } catch (err) {
-        console.warn('    ↳ Buscador nativo searchChats falló:', err.message);
+
+        return { foundGroup, debugInfo };
+    }, targetGroupName);
+
+    if (result && result.debugInfo && result.debugInfo.length > 0) {
+        console.log('    [DIAGNÓSTICO] Grupos detectados tras la búsqueda:');
+        result.debugInfo.forEach(g => console.log(`      - "${g.name}" (ID: ${g.id})`));
     }
 
-    // 3. Inspeccionar directamente los modelos en Store.Chat
-    try {
-        const result = await page.evaluate((targetName) => {
-            const normTarget = targetName.trim().toLowerCase();
-            const debugInfo = [];
-            let foundGroup = null;
-
-            let chats = [];
-            if (window.Store && window.Store.Chat) {
-                chats = window.Store.Chat.getModelsArray ? window.Store.Chat.getModelsArray() : (window.Store.Chat.models || []);
-            }
-
-            for (const chat of chats) {
-                let name = '';
-                try {
-                    name = chat.name || chat.formattedTitle || chat.title || (chat.contact ? (chat.contact.name || chat.contact.pushname) : '') || '';
-                } catch (e) {}
-
-                const isGroup = chat.isGroup || (chat.id && chat.id.server === 'g.us') || (chat.id && typeof chat.id === 'string' && chat.id.includes('g.us'));
-
-                if (isGroup) {
-                    debugInfo.push({ name, id: chat.id ? (chat.id._serialized || chat.id) : 'unknown' });
-
-                    if (name && name.trim().toLowerCase() === normTarget) {
-                        let participants = [];
-                        try {
-                            if (chat.groupMetadata && chat.groupMetadata.participants) {
-                                const rawParts = chat.groupMetadata.participants.getModelsArray ?
-                                    chat.groupMetadata.participants.getModelsArray() : chat.groupMetadata.participants;
-
-                                participants = (rawParts || []).map(p => {
-                                    let idStr = '';
-                                    if (p && p.id) {
-                                        idStr = typeof p.id === 'string' ? p.id : (p.id._serialized || `${p.id.user}@c.us`);
-                                    }
-                                    return { id: { _serialized: idStr } };
-                                });
-                            }
-                        } catch (pe) {}
-
-                        const chatId = typeof chat.id === 'string' ? chat.id : (chat.id._serialized || `${chat.id.user}@g.us`);
-                        foundGroup = {
-                            id: chatId,
-                            name: name,
-                            participants: participants
-                        };
-                        break;
+    if (result && result.foundGroup) {
+        const g = result.foundGroup;
+        return {
+            name: g.name,
+            isGroup: true,
+            id: { _serialized: g.id },
+            participants: g.participants,
+            addParticipants: async (jids) => {
+                return await page.evaluate(async (chatId, participantJids) => {
+                    if (window.WWebJS && window.WWebJS.group && window.WWebJS.group.addParticipants) {
+                        return await window.WWebJS.group.addParticipants(chatId, participantJids);
+                    } else {
+                        const groupChat = window.Store.Chat.get(chatId);
+                        return await groupChat.groupMetadata.participants.add(participantJids);
                     }
-                }
+                }, g.id, jids);
             }
-
-            return { foundGroup, debugInfo };
-        }, targetGroupName);
-
-        if (result && result.foundGroup) {
-            const groupData = result.foundGroup;
-            return {
-                name: groupData.name,
-                isGroup: true,
-                id: { _serialized: groupData.id },
-                participants: groupData.participants,
-                addParticipants: async (jids) => {
-                    return await page.evaluate(async (chatId, participantJids) => {
-                        if (window.WWebJS && window.WWebJS.group && window.WWebJS.group.addParticipants) {
-                            return await window.WWebJS.group.addParticipants(chatId, participantJids);
-                        } else {
-                            const groupChat = window.Store.Chat.get(chatId);
-                            return await groupChat.groupMetadata.participants.add(participantJids);
-                        }
-                    }, groupData.id, jids);
-                }
-            };
-        }
-    } catch (err) {
-        console.error('    ↳ Error inspeccionando Store.Chat:', err.message);
+        };
     }
 
     return null;
