@@ -110,7 +110,7 @@ function cargarContactosDesdeCSV(filePath) {
 }
 
 /**
- * Busca un grupo capturando captura de pantalla para diagnóstico visual
+ * Busca un grupo en WhatsApp Web mediante Store e interacción Puppeteer
  */
 async function buscarGrupoPorNombreSeguro(client, targetGroupName) {
     const page = client.pupPage;
@@ -121,16 +121,15 @@ async function buscarGrupoPorNombreSeguro(client, targetGroupName) {
     const screenPath = path.resolve('./whatsapp_screen.png');
     try {
         await page.screenshot({ path: screenPath });
-        console.log(`    ↳ Captura de pantalla guardada en: ${screenPath}`);
     } catch (e) {}
 
     try {
-        // Intentar pulsar el botón de buscar o la caja de búsqueda
+        // Intentar pulsar el botón de buscar o escribir en la barra de búsqueda si está disponible
         const searchInput = await page.$('#side div[contenteditable="true"], div[contenteditable="true"], p.selectable-text');
         if (searchInput) {
             await searchInput.click();
             await page.keyboard.type(targetGroupName, { delay: 50 });
-            await new Promise(r => setTimeout(r, 3000));
+            await new Promise(r => setTimeout(r, 2500));
         }
 
         // Inspeccionar chats en Store
@@ -217,11 +216,12 @@ async function buscarGrupoPorNombreSeguro(client, targetGroupName) {
     return null;
 }
 
-// Inicializar cliente de WhatsApp Web
+// Inicializar cliente de WhatsApp Web con User-Agent completo para evitar bloqueos en modo headless
 const client = new Client({
     authStrategy: new LocalAuth(),
     puppeteer: {
         headless: true,
+        userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36',
         args: [
             '--no-sandbox',
             '--disable-setuid-sandbox',
@@ -242,12 +242,16 @@ client.on('qr', (qr) => {
     qrcode.generate(qr, { small: true });
 });
 
+client.on('loading_screen', (percent, message) => {
+    console.log(`Cargando WhatsApp Web: ${percent}% - ${message}`);
+});
+
 client.on('authenticated', () => {
     console.log('Autenticación correcta en WhatsApp.');
 });
 
 client.on('auth_failure', (msg) => {
-    console.error('Error de autenticación:', msg);
+    console.error('Error de autenticación en WhatsApp:', msg);
 });
 
 client.on('ready', async () => {
