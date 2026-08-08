@@ -110,60 +110,36 @@ function cargarContactosDesdeCSV(filePath) {
 }
 
 /**
- * Cierra modales/popups flotantes de WhatsApp Web ("What's new on WhatsApp Web")
- */
-async function cerrarModalesWhatsApp(page) {
-    try {
-        await page.keyboard.press('Escape');
-        await new Promise(r => setTimeout(r, 500));
-        await page.keyboard.press('Escape');
-
-        await page.evaluate(() => {
-            // Buscar elementos de cierre de modales flotantes
-            const elements = Array.from(document.querySelectorAll('div[role="button"], button, span[data-icon="x"]'));
-            for (const el of elements) {
-                const label = el.getAttribute('aria-label') || '';
-                if (label.toLowerCase().includes('close') || label.toLowerCase().includes('cerrar') || el.innerHTML.includes('x')) {
-                    try { el.click(); } catch(e) {}
-                }
-            }
-        });
-        await new Promise(r => setTimeout(r, 1000));
-    } catch (e) {}
-}
-
-/**
- * Busca un grupo en WhatsApp Web mediante Store e interacción Puppeteer
+ * Busca un grupo mediante el buscador nativo de WhatsApp Web y de respaldo en window.Store
  */
 async function buscarGrupoPorNombreSeguro(client, targetGroupName) {
     const page = client.pupPage;
 
-    console.log(`    ↳ Cerrando ventanas emergentes de bienvenida si las hubiera...`);
-    await cerrarModalesWhatsApp(page);
-
-    console.log(`    ↳ Buscando el grupo "${targetGroupName}" en WhatsApp Web...`);
-
+    // 1. Cerrar visores de media o pantallas flotantes con Escape
     try {
-        // Buscar el icono o barra de búsqueda visual de WhatsApp Web
-        const searchInput = await page.$('#side div[contenteditable="true"], div[contenteditable="true"], p.selectable-text');
-        if (searchInput) {
-            await searchInput.click();
-            await page.keyboard.down('Meta');
-            await page.keyboard.press('A');
-            await page.keyboard.up('Meta');
-            await page.keyboard.press('Backspace');
-
-            await page.keyboard.type(targetGroupName, { delay: 50 });
-            await new Promise(r => setTimeout(r, 3000));
+        for (let i = 0; i < 3; i++) {
+            await page.keyboard.press('Escape');
+            await new Promise(r => setTimeout(r, 300));
         }
+    } catch (e) {}
 
-        // Tomar captura de pantalla actualizada tras realizar la búsqueda
-        const screenPath = path.resolve('./whatsapp_screen.png');
-        try {
-            await page.screenshot({ path: screenPath });
-        } catch (e) {}
+    // 2. Intentar buscar con el método nativo searchChats de whatsapp-web.js
+    try {
+        console.log(`    ↳ Buscando "${targetGroupName}" con el buscador nativo de WhatsApp...`);
+        const searchResults = await client.searchChats(targetGroupName);
+        if (searchResults && searchResults.length > 0) {
+            const match = searchResults.find(c => c.isGroup && c.name.trim().toLowerCase() === targetGroupName.trim().toLowerCase());
+            if (match) {
+                console.log(`    ↳ ¡Grupo encontrado exitosamente! (${match.name})`);
+                return match;
+            }
+        }
+    } catch (err) {
+        console.warn('    ↳ Buscador nativo searchChats falló:', err.message);
+    }
 
-        // Inspeccionar chats en Store
+    // 3. Inspeccionar directamente los modelos en Store.Chat
+    try {
         const result = await page.evaluate((targetName) => {
             const normTarget = targetName.trim().toLowerCase();
             const debugInfo = [];
@@ -216,11 +192,6 @@ async function buscarGrupoPorNombreSeguro(client, targetGroupName) {
             return { foundGroup, debugInfo };
         }, targetGroupName);
 
-        if (result && result.debugInfo && result.debugInfo.length > 0) {
-            console.log('    [DIAGNÓSTICO] Grupos detectados tras búsqueda:');
-            result.debugInfo.forEach(g => console.log(`      - "${g.name}" (ID: ${g.id})`));
-        }
-
         if (result && result.foundGroup) {
             const groupData = result.foundGroup;
             return {
@@ -241,7 +212,7 @@ async function buscarGrupoPorNombreSeguro(client, targetGroupName) {
             };
         }
     } catch (err) {
-        console.error('    ↳ Error durante la búsqueda del grupo:', err.message);
+        console.error('    ↳ Error inspeccionando Store.Chat:', err.message);
     }
 
     return null;
