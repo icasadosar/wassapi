@@ -137,45 +137,40 @@ async function limpiarPantallaWhatsApp(page) {
 }
 
 /**
- * Busca un grupo escribiendo en el buscador visual de WhatsApp Web mediante clics y teclado
+ * Busca un grupo enfocando la barra de búsqueda de WhatsApp Web en las coordenadas (250, 70)
  */
 async function buscarGrupoPorNombreSeguro(client, targetGroupName) {
     const page = client.pupPage;
 
     await limpiarPantallaWhatsApp(page);
 
-    console.log(`    ↳ Haciendo clic en la barra de búsqueda de WhatsApp Web...`);
+    console.log(`    ↳ Enfocando la barra de búsqueda de WhatsApp Web...`);
 
     try {
-        // Buscar el elemento por texto / atributo o usar las coordenadas fijas del campo de búsqueda
-        const clicked = await page.evaluate(() => {
-            const elements = Array.from(document.querySelectorAll('*'));
-            for (const el of elements) {
-                const txt = (el.getAttribute('aria-label') || el.getAttribute('placeholder') || el.innerText || '').toLowerCase();
-                if (txt.includes('search or start') || txt.includes('buscar o empezar')) {
-                    try {
-                        el.click();
-                        return true;
-                    } catch (e) {}
-                }
+        // Enfocar el elemento del DOM en las coordenadas reales de la caja de búsqueda (x: 250, y: 70)
+        await page.evaluate(() => {
+            const el = document.elementFromPoint(250, 70);
+            if (el) {
+                try { el.click(); } catch(e) {}
+                if (el.focus) el.focus();
             }
-            return false;
         });
 
-        if (!clicked) {
-            // Clic por coordenadas exactas sobre la caja de búsqueda (x: 250, y: 185)
-            await page.mouse.click(250, 185);
-        }
+        await page.mouse.click(250, 70);
+        await new Promise(r => setTimeout(r, 400));
 
-        await new Promise(r => setTimeout(r, 500));
+        // Limpiar cualquier texto e ingresar el nombre del grupo
+        await page.keyboard.down('Meta');
+        await page.keyboard.press('A');
+        await page.keyboard.up('Meta');
+        await page.keyboard.press('Backspace');
 
-        // Escribir el término de búsqueda
         await page.keyboard.type(targetGroupName, { delay: 60 });
-        console.log(`    ↳ Término "${targetGroupName}" enviado. Esperando a que WhatsApp muestre los grupos filtrados...`);
+        console.log(`    ↳ Término "${targetGroupName}" introducido en la búsqueda. Esperando a que WhatsApp cargue los resultados...`);
 
         await new Promise(r => setTimeout(r, 3500));
 
-        // Tomar captura de pantalla de los resultados de búsqueda
+        // Capturar pantalla tras la búsqueda
         const screenPath = path.resolve('./whatsapp_screen.png');
         try { await page.screenshot({ path: screenPath }); } catch (e) {}
 
