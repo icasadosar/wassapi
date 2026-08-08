@@ -110,24 +110,48 @@ function cargarContactosDesdeCSV(filePath) {
 }
 
 /**
- * Busca un grupo de forma ultra-segura inspeccionando window.Store de WhatsApp Web
+ * Busca un grupo utilizando la interfaz UI de WhatsApp Web y window.Store
  */
 async function buscarGrupoPorNombreSeguro(client, targetGroupName) {
     const page = client.pupPage;
 
-    const result = await page.evaluate(async (targetName) => {
-        const normTarget = targetName.trim().toLowerCase();
+    console.log(`    ↳ Buscando el grupo "${targetGroupName}" en la interfaz de WhatsApp Web...`);
 
-        // Esperar hasta 10 segundos por window.Store
-        for (let attempt = 0; attempt < 20; attempt++) {
-            if (window.Store && (window.Store.Chat || window.Store.GroupMetadata)) break;
-            await new Promise(r => setTimeout(r, 500));
+    try {
+        // 1. Intentar forzar la búsqueda interna mediante Store.Search si existe
+        await page.evaluate(async (query) => {
+            if (window.Store && window.Store.Search && window.Store.Search.search) {
+                try {
+                    await window.Store.Search.search(query);
+                } catch (e) {}
+            }
+        }, targetGroupName);
+
+        // 2. Usar la barra de búsqueda visual de WhatsApp Web para forzar la carga del grupo
+        const searchSelector = 'div[contenteditable="true"][data-tab="3"], div[contenteditable="true"]';
+        try {
+            await page.waitForSelector(searchSelector, { timeout: 5000 });
+            await page.click(searchSelector);
+
+            // Limpiar texto anterior en la caja de búsqueda
+            await page.keyboard.down('Meta');
+            await page.keyboard.press('A');
+            await page.keyboard.up('Meta');
+            await page.keyboard.press('Backspace');
+
+            // Escribir el nombre del grupo
+            await page.type(searchSelector, targetGroupName, { delay: 30 });
+            await new Promise(r => setTimeout(r, 2000));
+        } catch (uiErr) {
+            console.warn('    ↳ Advertencia al interactuar con el cuadro de búsqueda UI:', uiErr.message);
         }
 
-        const debugInfo = [];
-        let foundGroup = null;
+        // 3. Inspeccionar chats en Store
+        const result = await page.evaluate((targetName) => {
+            const normTarget = targetName.trim().toLowerCase();
+            const debugInfo = [];
+            let foundGroup = null;
 
-        try {
             let chats = [];
             if (window.Store && window.Store.Chat) {
                 chats = window.Store.Chat.getModelsArray ? window.Store.Chat.getModelsArray() : (window.Store.Chat.models || []);
@@ -171,38 +195,36 @@ async function buscarGrupoPorNombreSeguro(client, targetGroupName) {
                     }
                 }
             }
-        } catch (err) {
-            return { error: err.message, debugInfo };
+
+            return { foundGroup, debugInfo };
+        }, targetGroupName);
+
+        if (result && result.debugInfo && result.debugInfo.length > 0) {
+            console.log('    [DIAGNÓSTICO] Grupos detectados tras búsqueda:');
+            result.debugInfo.forEach(g => console.log(`      - "${g.name}" (ID: ${g.id})`));
         }
 
-        return { foundGroup, debugInfo };
-    }, targetGroupName);
-
-    if (result && result.debugInfo && result.debugInfo.length > 0) {
-        console.log('    [DIAGNÓSTICO] Grupos detectados en tu WhatsApp Web:');
-        result.debugInfo.forEach(g => console.log(`      - "${g.name}" (ID: ${g.id})`));
-    } else {
-        console.log('    [DIAGNÓSTICO] No se encontraron grupos cargados aún en la memoria activa.');
-    }
-
-    if (result && result.foundGroup) {
-        const groupData = result.foundGroup;
-        return {
-            name: groupData.name,
-            isGroup: true,
-            id: { _serialized: groupData.id },
-            participants: groupData.participants,
-            addParticipants: async (jids) => {
-                return await page.evaluate(async (chatId, participantJids) => {
-                    if (window.WWebJS && window.WWebJS.group && window.WWebJS.group.addParticipants) {
-                        return await window.WWebJS.group.addParticipants(chatId, participantJids);
-                    } else {
-                        const groupChat = window.Store.Chat.get(chatId);
-                        return await groupChat.groupMetadata.participants.add(participantJids);
-                    }
-                }, groupData.id, jids);
-            }
-        };
+        if (result && result.foundGroup) {
+            const groupData = result.foundGroup;
+            return {
+                name: groupData.name,
+                isGroup: true,
+                id: { _serialized: groupData.id },
+                participants: groupData.participants,
+                addParticipants: async (jids) => {
+                    return await page.evaluate(async (chatId, participantJids) => {
+                        if (window.WWebJS && window.WWebJS.group && window.WWebJS.group.addParticipants) {
+                            return await window.WWebJS.group.addParticipants(chatId, participantJids);
+                        } else {
+                            const groupChat = window.Store.Chat.get(chatId);
+                            return await groupChat.groupMetadata.participants.add(participantJids);
+                        }
+                    }, groupData.id, jids);
+                }
+            };
+        }
+    } catch (err) {
+        console.error('    ↳ Error durante la búsqueda del grupo:', err.message);
     }
 
     return null;
