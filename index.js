@@ -110,43 +110,30 @@ function cargarContactosDesdeCSV(filePath) {
 }
 
 /**
- * Busca un grupo utilizando la interfaz UI de WhatsApp Web y window.Store
+ * Busca un grupo capturando captura de pantalla para diagnóstico visual
  */
 async function buscarGrupoPorNombreSeguro(client, targetGroupName) {
     const page = client.pupPage;
 
-    console.log(`    ↳ Buscando el grupo "${targetGroupName}" en la interfaz de WhatsApp Web...`);
+    console.log(`    ↳ Buscando el grupo "${targetGroupName}" en WhatsApp Web...`);
+
+    // Tomar captura de pantalla para inspeccionar el estado exacto del navegador
+    const screenPath = path.resolve('./whatsapp_screen.png');
+    try {
+        await page.screenshot({ path: screenPath });
+        console.log(`    ↳ Captura de pantalla guardada en: ${screenPath}`);
+    } catch (e) {}
 
     try {
-        // 1. Intentar forzar la búsqueda interna mediante Store.Search si existe
-        await page.evaluate(async (query) => {
-            if (window.Store && window.Store.Search && window.Store.Search.search) {
-                try {
-                    await window.Store.Search.search(query);
-                } catch (e) {}
-            }
-        }, targetGroupName);
-
-        // 2. Usar la barra de búsqueda visual de WhatsApp Web para forzar la carga del grupo
-        const searchSelector = 'div[contenteditable="true"][data-tab="3"], div[contenteditable="true"]';
-        try {
-            await page.waitForSelector(searchSelector, { timeout: 5000 });
-            await page.click(searchSelector);
-
-            // Limpiar texto anterior en la caja de búsqueda
-            await page.keyboard.down('Meta');
-            await page.keyboard.press('A');
-            await page.keyboard.up('Meta');
-            await page.keyboard.press('Backspace');
-
-            // Escribir el nombre del grupo
-            await page.type(searchSelector, targetGroupName, { delay: 30 });
-            await new Promise(r => setTimeout(r, 2000));
-        } catch (uiErr) {
-            console.warn('    ↳ Advertencia al interactuar con el cuadro de búsqueda UI:', uiErr.message);
+        // Intentar pulsar el botón de buscar o la caja de búsqueda
+        const searchInput = await page.$('#side div[contenteditable="true"], div[contenteditable="true"], p.selectable-text');
+        if (searchInput) {
+            await searchInput.click();
+            await page.keyboard.type(targetGroupName, { delay: 50 });
+            await new Promise(r => setTimeout(r, 3000));
         }
 
-        // 3. Inspeccionar chats en Store
+        // Inspeccionar chats en Store
         const result = await page.evaluate((targetName) => {
             const normTarget = targetName.trim().toLowerCase();
             const debugInfo = [];
