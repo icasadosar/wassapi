@@ -56,9 +56,9 @@ GOOGLE_TOKEN_PATH="./token.json"
 
 ---
 
-## 📄 Formato del archivo CSV (`contactos.csv`)
+## 📄 Formato del archivo CSV (`contactos.example.csv`)
 
-Ejemplo de `contactos.csv`:
+Ejemplo de `contactos.example.csv`:
 ```csv
 Nombre tutor,Teléfono tutor,Nombre,Apellidos,Equipos
 Juan Perez,0034600000001,Lucas,Perez Gomez,Infantil (2013-2014)

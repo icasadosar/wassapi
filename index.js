@@ -8,7 +8,7 @@ const { getAuthenticatedClient, sincronizarContactoGoogle } = require('./googleC
 
 // Cargar variables de entorno con valores por defecto
 const GROUP_NAME = process.env.GROUP_NAME || 'Nombre De Tu Grupo';
-const CSV_PATH = path.resolve(process.env.CSV_PATH || './contactos.csv');
+const CSV_PATH = path.resolve(process.env.CSV_PATH || './contactos.example.csv');
 const PHONE_COLUMN = process.env.PHONE_COLUMN || 'Teléfono tutor';
 const NAME_COLUMN = process.env.NAME_COLUMN || 'Nombre tutor';
 
