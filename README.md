@@ -76,14 +76,16 @@ Para activar la sincronización con Google Contacts:
 
 1. Ve a la consola de **Google Cloud Console** ([console.cloud.google.com](https://console.cloud.google.com)).
 2. Crea un proyecto y habilita la **Google People API**.
-3. En la sección de **Credenciales**, crea un ID de cliente de **OAuth 2.0** (Aplicación de escritorio / Desktop Application).
-4. Descarga el archivo JSON y guárdalo en la raíz del proyecto con el nombre `credentials.json`.
-5. En tu archivo `.env`, establece:
+3. En la sección de **Pantalla de consentimiento de OAuth**, añade tu dirección de correo electrónico en la sección **Usuarios de prueba** (*Test users*).
+4. En la sección de **Credenciales**, crea un ID de cliente de **OAuth 2.0** (Aplicación Web o Escritorio).
+5. En las **URIs de redireccionamiento autorizados** (*Authorized redirect URIs*), añade `http://localhost:3000/oauth2callback`.
+6. Descarga el archivo JSON y guárdalo en la raíz del proyecto con el nombre `credentials.json`.
+7. En tu archivo `.env`, establece:
    ```env
    SYNC_GOOGLE_CONTACTS=true
    ```
-   *(O ejecuta pasándole el comando `npm run dry-run:google`)*.
-6. En la primera ejecución, el script te dará una URL para autorizar el acceso en tu navegador y pegar el código en la consola. El token de sesión se guardará en `token.json`.
+   *(O ejecuta directamente `npm run dry-run:google`)*.
+8. En la primera ejecución, el script iniciará un servidor de autenticación local para capturar el acceso. El token de sesión se guardará automáticamente en `token.json`.
 
 ---
 
