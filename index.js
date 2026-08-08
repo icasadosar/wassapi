@@ -118,7 +118,7 @@ async function limpiarPantallaWhatsApp(page) {
     for (let i = 0; i < 3; i++) {
         try {
             await page.keyboard.press('Escape');
-            await new Promise(r => setTimeout(r, 250));
+            await new Promise(r => setTimeout(r, 200));
         } catch (e) {}
     }
 
@@ -137,7 +137,7 @@ async function limpiarPantallaWhatsApp(page) {
 }
 
 /**
- * Busca un grupo en WhatsApp Web esperando a que la interfaz esté totalmente renderizada
+ * Busca un grupo inspeccionando los elementos del DOM en la zona de búsqueda
  */
 async function buscarGrupoPorNombreSeguro(client, targetGroupName) {
     const page = client.pupPage;
@@ -145,34 +145,61 @@ async function buscarGrupoPorNombreSeguro(client, targetGroupName) {
     console.log(`    ↳ Esperando a que el panel lateral de chats esté renderizado...`);
     try {
         await page.waitForSelector('#pane-side, #side, div[contenteditable="true"]', { timeout: 20000 });
-    } catch (e) {
-        console.warn('    ↳ Tiempo de espera agotado esperando el panel de chats. Continuando...');
-    }
+    } catch (e) {}
 
     await limpiarPantallaWhatsApp(page);
 
-    console.log(`    ↳ Enfocando la barra de búsqueda e ingresando "${targetGroupName}"...`);
+    console.log(`    ↳ Inspeccionando los elementos DOM del cuadro de búsqueda...`);
+
+    const searchElementsInfo = await page.evaluate(() => {
+        const results = [];
+        const elements = document.querySelectorAll('*');
+        for (const el of elements) {
+            const rect = el.getBoundingClientRect();
+            if (rect.left > 80 && rect.right < 550 && rect.top > 30 && rect.bottom < 110 && rect.width > 100) {
+                results.push({
+                    tag: el.tagName,
+                    class: el.className,
+                    ariaLabel: el.getAttribute('aria-label'),
+                    role: el.getAttribute('role'),
+                    contenteditable: el.getAttribute('contenteditable'),
+                    text: el.innerText ? el.innerText.substring(0, 30) : ''
+                });
+            }
+        }
+        return results;
+    });
+
+    console.log('    [DIAGNÓSTICO DOM] Elementos en zona de búsqueda:');
+    (searchElementsInfo || []).forEach(e => {
+        console.log(`      - <${e.tag}> role="${e.role}" ariaLabel="${e.ariaLabel}" text="${e.text}" class="${e.class.substring(0, 40)}"`);
+    });
 
     try {
-        // Clic directo sobre la barra de búsqueda en (x: 250, y: 70) y evaluación del elemento en el DOM
+        // Hacer clic e intentar enfocar cualquier elemento de la zona de búsqueda
         await page.evaluate(() => {
-            const searchBox = document.querySelector('#side div[contenteditable="true"], div[title="Search input field"], div[contenteditable="true"]');
-            if (searchBox) {
-                try { searchBox.click(); } catch(e) {}
-                if (searchBox.focus) searchBox.focus();
-            } else {
-                const el = document.elementFromPoint(250, 70);
-                if (el) {
-                    try { el.click(); } catch(e) {}
-                    if (el.focus) el.focus();
+            const elements = Array.from(document.querySelectorAll('*'));
+            for (const el of elements) {
+                const rect = el.getBoundingClientRect();
+                if (rect.left > 80 && rect.right < 550 && rect.top > 30 && rect.bottom < 110 && rect.width > 100) {
+                    if (el.tagName === 'DIV' || el.tagName === 'INPUT' || el.tagName === 'P' || el.tagName === 'LABEL') {
+                        try { el.click(); } catch(e) {}
+                        if (el.focus) el.focus();
+                    }
                 }
             }
         });
 
         await page.mouse.click(250, 70);
-        await new Promise(r => setTimeout(r, 600));
+        await new Promise(r => setTimeout(r, 500));
 
-        // Limpiar cualquier texto en la barra de búsqueda
+        // Pulsar shortcut de búsqueda de WhatsApp (Cmd+F / Ctrl+F o /)
+        await page.keyboard.down('Meta');
+        await page.keyboard.press('F');
+        await page.keyboard.up('Meta');
+        await new Promise(r => setTimeout(r, 300));
+
+        // Limpiar cualquier contenido existente
         await page.keyboard.down('Meta');
         await page.keyboard.press('A');
         await page.keyboard.up('Meta');
@@ -181,7 +208,7 @@ async function buscarGrupoPorNombreSeguro(client, targetGroupName) {
 
         // Escribir el nombre del grupo
         await page.keyboard.type(targetGroupName, { delay: 80 });
-        console.log(`    ↳ Búsqueda introducida. Esperando 4s a que WhatsApp recupere los datos del grupo...`);
+        console.log(`    ↳ Búsqueda "${targetGroupName}" enviada por teclado. Esperando 4s...`);
 
         await new Promise(r => setTimeout(r, 4000));
 
