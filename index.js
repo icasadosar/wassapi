@@ -110,25 +110,48 @@ function cargarContactosDesdeCSV(filePath) {
 }
 
 /**
+ * Cierra visores multimedia abiertos y vuelve al listado principal de chats
+ */
+async function limpiarPantallaWhatsApp(page) {
+    console.log('    ↳ Limpiando pantalla y cerrando visores de imágenes/diálogos...');
+    
+    // Pulsar Escape para cerrar visores o modales
+    for (let i = 0; i < 3; i++) {
+        try {
+            await page.keyboard.press('Escape');
+            await new Promise(r => setTimeout(r, 200));
+        } catch (e) {}
+    }
+
+    // Hacer clic en los botones de cierre X o ir al icono de Chats
+    try {
+        await page.evaluate(() => {
+            const elements = Array.from(document.querySelectorAll('button, div[role="button"], span'));
+            for (const el of elements) {
+                const label = el.getAttribute('aria-label') || el.getAttribute('title') || '';
+                if (label.toLowerCase() === 'close' || label.toLowerCase() === 'cerrar') {
+                    try { el.click(); } catch(e) {}
+                }
+            }
+        });
+        await new Promise(r => setTimeout(r, 500));
+    } catch (e) {}
+}
+
+/**
  * Busca un grupo mediante WWebJS.searchChats y Store.Search dentro del contexto del navegador
  */
 async function buscarGrupoPorNombreSeguro(client, targetGroupName) {
     const page = client.pupPage;
 
-    // 1. Cerrar visores multimedia o modales con Escape
-    try {
-        for (let i = 0; i < 3; i++) {
-            await page.keyboard.press('Escape');
-            await new Promise(r => setTimeout(r, 200));
-        }
-    } catch (e) {}
+    await limpiarPantallaWhatsApp(page);
 
     console.log(`    ↳ Buscando "${targetGroupName}" en la API interna de WhatsApp Web...`);
 
     const result = await page.evaluate(async (targetName) => {
         const normTarget = targetName.trim().toLowerCase();
 
-        // 2. Forzar búsqueda a través de WWebJS.searchChats o Store.Search
+        // Forzar búsqueda mediante WWebJS.searchChats o Store.Search
         try {
             if (window.WWebJS && window.WWebJS.searchChats) {
                 await window.WWebJS.searchChats(targetName);
@@ -137,7 +160,6 @@ async function buscarGrupoPorNombreSeguro(client, targetGroupName) {
             }
         } catch (e) {}
 
-        // Esperar 1.5s a que los resultados se asienten en el Store de chats
         await new Promise(r => setTimeout(r, 1500));
 
         let chats = [];
@@ -189,6 +211,12 @@ async function buscarGrupoPorNombreSeguro(client, targetGroupName) {
 
         return { foundGroup, debugInfo };
     }, targetGroupName);
+
+    // Guardar captura de pantalla actualizada tras limpiar y buscar
+    const screenPath = path.resolve('./whatsapp_screen.png');
+    try {
+        await page.screenshot({ path: screenPath });
+    } catch (e) {}
 
     if (result && result.debugInfo && result.debugInfo.length > 0) {
         console.log('    [DIAGNÓSTICO] Grupos detectados tras la búsqueda:');
