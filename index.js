@@ -69,13 +69,13 @@ function cargarContactosDesdeCSV(filePath) {
         fs.createReadStream(filePath)
             .pipe(csv())
             .on('data', (row) => {
-                const rawPhone = row[PHONE_COLUMN];
+                const rawPhone = row[PHONE_COLUMN] || row['Teléfono tutor'] || row['telefono'] || row['teléfono'] || row['phone'] || row['Phone'] || '';
                 const phoneNorm = normalizarTelefono(rawPhone);
 
-                const tutor = (row[TUTOR_NAME_COLUMN] || row[NAME_COLUMN] || 'Tutor').trim();
-                const player = (row[PLAYER_NAME_COLUMN] || '').trim();
-                const surname = (row[PLAYER_SURNAME_COLUMN] || '').trim();
-                const team = (row[PLAYER_TEAM_COLUMN] || '').trim();
+                const tutor = (row[TUTOR_NAME_COLUMN] || row[NAME_COLUMN] || row['Nombre tutor'] || row['nombre'] || row['name'] || 'Tutor').trim();
+                const player = (row[PLAYER_NAME_COLUMN] || row['Nombre'] || '').trim();
+                const surname = (row[PLAYER_SURNAME_COLUMN] || row['Apellidos'] || '').trim();
+                const team = (row[PLAYER_TEAM_COLUMN] || row['Equipos'] || '').trim();
 
                 const whatsappName = tutor;
                 
