@@ -5,13 +5,16 @@
   "main": "index.js",
   "scripts": {
     "start": "node index.js",
-    "dry-run": "DRY_RUN=true node index.js"
+    "start:google": "SYNC_GOOGLE_CONTACTS=true node index.js",
+    "dry-run": "DRY_RUN=true node index.js",
+    "dry-run:google": "DRY_RUN=true SYNC_GOOGLE_CONTACTS=true node index.js"
   },
   "keywords": [
     "whatsapp",
     "whatsapp-web",
     "group-manager",
-    "csv"
+    "csv",
+    "google-contacts"
   ],
   "author": "",
   "license": "ISC",
