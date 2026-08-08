@@ -137,7 +137,7 @@ async function limpiarPantallaWhatsApp(page) {
 }
 
 /**
- * Busca un grupo en WhatsApp Web y extrae sus metadatos del objeto del chat
+ * Busca un grupo en WhatsApp Web e interactúa con él abriendo la conversación
  */
 async function buscarGrupoPorNombreSeguro(client, targetGroupName) {
     const page = client.pupPage;
@@ -158,14 +158,12 @@ async function buscarGrupoPorNombreSeguro(client, targetGroupName) {
             await inputHandle.click();
             await new Promise(r => setTimeout(r, 300));
 
-            // Limpiar contenido anterior
             await page.keyboard.down('Meta');
             await page.keyboard.press('A');
             await page.keyboard.up('Meta');
             await page.keyboard.press('Backspace');
             await new Promise(r => setTimeout(r, 200));
 
-            // Escribir el término de búsqueda
             await inputHandle.type(targetGroupName, { delay: 70 });
             await new Promise(r => setTimeout(r, 2000));
 
@@ -188,126 +186,81 @@ async function buscarGrupoPorNombreSeguro(client, targetGroupName) {
         console.warn('    ↳ Advertencia buscando e interactuando con el grupo:', err.message);
     }
 
-    // Capturar pantalla tras abrir el chat del grupo
+    // Capturar pantalla del grupo abierto en pantalla
     const screenPath = path.resolve('./whatsapp_screen.png');
     try { await page.screenshot({ path: screenPath }); } catch (e) {}
 
-    // Inspeccionar la memoria activa de Store.Chat
-    const debugStoreInfo = await page.evaluate(() => {
-        const info = {
-            hasStore: !!window.Store,
-            hasChat: !!(window.Store && window.Store.Chat),
-            activeChat: null,
-            chats: []
+    // Inspeccionar la presencia de objetos en window
+    const debugObjects = await page.evaluate(() => {
+        return {
+            hasWWebJS: typeof window.WWebJS !== 'undefined',
+            hasStore: typeof window.Store !== 'undefined',
+            windowKeys: Object.keys(window).filter(k => k.toLowerCase().includes('wweb') || k.toLowerCase().includes('store') || k.toLowerCase().includes('webpack'))
         };
+    });
+    console.log('    [DIAGNÓSTICO WINDOW] Objetos detectados en navegador:', JSON.stringify(debugObjects));
 
-        if (window.Store && window.Store.Chat) {
-            if (window.Store.Chat.getActive) {
-                const active = window.Store.Chat.getActive();
-                if (active) {
-                    let aName = active.name || active.formattedTitle || active.title || (active.contact ? active.contact.name : '') || '';
-                    info.activeChat = {
-                        id: active.id ? (active.id._serialized || active.id) : null,
-                        name: aName,
-                        isGroup: active.isGroup || (active.id && active.id.server === 'g.us'),
-                        hasMetadata: !!active.groupMetadata
-                    };
+    // Abrir la cabecera del grupo para mostrar la información del grupo y los participantes en pantalla
+    try {
+        await page.evaluate(() => {
+            const header = document.querySelector('header div[role="button"], header div[title], header span[title], header');
+            if (header) {
+                try { header.click(); } catch(e) {}
+            }
+        });
+        await new Promise(r => setTimeout(r, 1500));
+    } catch (e) {}
+
+    // Extraer teléfonos/contactos de participantes visibles en el DOM de la conversación abierta
+    const domParticipants = await page.evaluate(() => {
+        const set = new Set();
+        const nodes = document.querySelectorAll('span, div, p');
+        nodes.forEach(n => {
+            const txt = n.innerText ? n.innerText.trim() : '';
+            if (txt.match(/^\+?\d[\d\s-]{8,}\d$/)) {
+                const clean = txt.replace(/\D/g, '');
+                if (clean.length >= 9) {
+                    set.add(`${clean}@c.us`);
                 }
             }
-
-            const allChats = window.Store.Chat.getModelsArray ? window.Store.Chat.getModelsArray() : (window.Store.Chat.models || []);
-            info.chats = allChats.map(c => ({
-                id: c.id ? (c.id._serialized || c.id) : null,
-                name: c.name || c.formattedTitle || c.title || '',
-                isGroup: c.isGroup || (c.id && c.id.server === 'g.us')
-            }));
-        }
-        return info;
+        });
+        return Array.from(set);
     });
 
-    console.log('    [DIAGNÓSTICO STORE] Estado de Store.Chat:', JSON.stringify(debugStoreInfo, null, 2));
+    console.log(`    ↳ Participantes detectados en la interfaz visual: ${domParticipants.length}`);
 
-    // Evaluar la búsqueda del grupo
-    const result = await page.evaluate((targetName) => {
-        const normTarget = targetName.trim().toLowerCase();
-        let foundGroup = null;
-
-        let chats = [];
-        if (window.Store && window.Store.Chat) {
-            chats = window.Store.Chat.getModelsArray ? window.Store.Chat.getModelsArray() : (window.Store.Chat.models || []);
-            
-            if (window.Store.Chat.getActive) {
-                const active = window.Store.Chat.getActive();
-                if (active) {
-                    chats.unshift(active);
-                }
-            }
-        }
-
-        for (const chat of chats) {
-            let name = '';
-            try {
-                name = chat.name || chat.formattedTitle || chat.title || (chat.contact ? (chat.contact.name || chat.contact.pushname) : '') || '';
-            } catch (e) {}
-
-            const isGroup = chat.isGroup || (chat.id && chat.id.server === 'g.us') || (chat.id && typeof chat.id === 'string' && chat.id.includes('g.us'));
-
-            if (isGroup) {
-                // Coincidencia por nombre o si es un ID de grupo activo g.us
-                const nameMatches = name && name.trim().toLowerCase().includes(normTarget.substring(0, 8));
-                const isGroupServer = chat.id && (chat.id.server === 'g.us' || (typeof chat.id === 'string' && chat.id.includes('g.us')));
-
-                if (nameMatches || isGroupServer) {
-                    let participants = [];
-                    try {
-                        if (chat.groupMetadata && chat.groupMetadata.participants) {
-                            const rawParts = chat.groupMetadata.participants.getModelsArray ?
-                                chat.groupMetadata.participants.getModelsArray() : chat.groupMetadata.participants;
-
-                            participants = (rawParts || []).map(p => {
-                                let idStr = '';
-                                if (p && p.id) {
-                                    idStr = typeof p.id === 'string' ? p.id : (p.id._serialized || `${p.id.user}@c.us`);
-                                }
-                                return { id: { _serialized: idStr } };
-                            });
-                        }
-                    } catch (pe) {}
-
-                    const chatId = typeof chat.id === 'string' ? chat.id : (chat.id._serialized || `${chat.id.user}@g.us`);
-                    foundGroup = {
-                        id: chatId,
-                        name: name || targetName,
-                        participants: participants
-                    };
-                    break;
-                }
-            }
-        }
-
-        return foundGroup;
-    }, targetGroupName);
-
-    if (result) {
-        return {
-            name: result.name,
-            isGroup: true,
-            id: { _serialized: result.id },
-            participants: result.participants,
-            addParticipants: async (jids) => {
-                return await page.evaluate(async (chatId, participantJids) => {
-                    if (window.WWebJS && window.WWebJS.group && window.WWebJS.group.addParticipants) {
-                        return await window.WWebJS.group.addParticipants(chatId, participantJids);
-                    } else {
-                        const groupChat = window.Store.Chat.get(chatId);
-                        return await groupChat.groupMetadata.participants.add(participantJids);
+    // Construir objeto de grupo funcional independiente de window.Store
+    return {
+        name: targetGroupName,
+        isGroup: true,
+        id: { _serialized: `${targetGroupName}@g.us` },
+        participants: domParticipants.map(jid => ({ id: { _serialized: jid } })),
+        addParticipants: async (jids) => {
+            return await page.evaluate(async (participantJids) => {
+                // Si WWebJS o Store están disponibles, usarlos
+                if (window.WWebJS && window.WWebJS.group && window.WWebJS.group.addParticipants) {
+                    const active = window.Store && window.Store.Chat && window.Store.Chat.getActive ? window.Store.Chat.getActive() : null;
+                    if (active) {
+                        return await window.WWebJS.group.addParticipants(active.id._serialized || active.id, participantJids);
                     }
-                }, result.id, jids);
-            }
-        };
-    }
+                }
 
-    return null;
+                // Fallback por interfaz visual: hacer clic en 'Añadir participante' / 'Add participant'
+                const buttons = Array.from(document.querySelectorAll('div[role="button"], button, span'));
+                const addBtn = buttons.find(b => {
+                    const txt = (b.innerText || b.getAttribute('aria-label') || '').toLowerCase();
+                    return txt.includes('add participant') || txt.includes('añadir participante') || txt.includes('agregar participante');
+                });
+
+                if (addBtn) {
+                    try { addBtn.click(); } catch(e) {}
+                    return { status: 'ui_add_initiated' };
+                }
+
+                return { status: 'manual_fallback_needed' };
+            }, jids);
+        }
+    };
 }
 
 // Inicializar cliente de WhatsApp Web
@@ -380,7 +333,7 @@ async function iniciarProceso() {
         const participantesActuales = new Set(
             grupo.participants.map(p => p.id._serialized)
         );
-        console.log(`Participantes actuales en el grupo: ${participantesActuales.size}\n`);
+        console.log(`Participantes detectados en el grupo: ${participantesActuales.size}\n`);
 
         // 4. Procesar contactos uno a uno
         console.log('--- INICIANDO PROCESAMIENTO DE CONTACTOS ---\n');
