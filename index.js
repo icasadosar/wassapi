@@ -117,19 +117,19 @@ async function buscarGrupoPorNombreSeguro(client, targetGroupName) {
 
     console.log(`    ↳ Buscando el grupo "${targetGroupName}" en WhatsApp Web...`);
 
-    // Tomar captura de pantalla para inspeccionar el estado exacto del navegador
+    // Tomar captura de pantalla para inspección visual
     const screenPath = path.resolve('./whatsapp_screen.png');
     try {
         await page.screenshot({ path: screenPath });
     } catch (e) {}
 
     try {
-        // Intentar pulsar el botón de buscar o escribir en la barra de búsqueda si está disponible
+        // Forzar búsqueda en la barra de texto si está presente
         const searchInput = await page.$('#side div[contenteditable="true"], div[contenteditable="true"], p.selectable-text');
         if (searchInput) {
             await searchInput.click();
             await page.keyboard.type(targetGroupName, { delay: 50 });
-            await new Promise(r => setTimeout(r, 2500));
+            await new Promise(r => setTimeout(r, 3000));
         }
 
         // Inspeccionar chats en Store
@@ -216,7 +216,7 @@ async function buscarGrupoPorNombreSeguro(client, targetGroupName) {
     return null;
 }
 
-// Inicializar cliente de WhatsApp Web con User-Agent completo para evitar bloqueos en modo headless
+// Inicializar cliente de WhatsApp Web
 const client = new Client({
     authStrategy: new LocalAuth(),
     puppeteer: {
@@ -234,27 +234,12 @@ const client = new Client({
     }
 });
 
-client.on('qr', (qr) => {
-    console.log('\n======================================================');
-    console.log(' ESCANEA EL CÓDIGO QR CON TU APLICACIÓN DE WHATSAPP');
-    console.log(' (Ajustes -> Dispositivos vinculados -> Vincular dispositivo)');
-    console.log('======================================================\n');
-    qrcode.generate(qr, { small: true });
-});
+let processStarted = false;
 
-client.on('loading_screen', (percent, message) => {
-    console.log(`Cargando WhatsApp Web: ${percent}% - ${message}`);
-});
+async function iniciarProceso() {
+    if (processStarted) return;
+    processStarted = true;
 
-client.on('authenticated', () => {
-    console.log('Autenticación correcta en WhatsApp.');
-});
-
-client.on('auth_failure', (msg) => {
-    console.error('Error de autenticación en WhatsApp:', msg);
-});
-
-client.on('ready', async () => {
     console.log('\nCliente de WhatsApp Web listo y conectado.');
     if (IS_DRY_RUN) {
         console.log('*** MODO SIMULACIÓN (--dry-run) ACTIVADO: No se modificarán datos reales ***\n');
@@ -373,6 +358,37 @@ client.on('ready', async () => {
         await client.destroy();
         process.exit(0);
     }
+}
+
+client.on('qr', (qr) => {
+    console.log('\n======================================================');
+    console.log(' ESCANEA EL CÓDIGO QR CON TU APLICACIÓN DE WHATSAPP');
+    console.log(' (Ajustes -> Dispositivos vinculados -> Vincular dispositivo)');
+    console.log('======================================================\n');
+    qrcode.generate(qr, { small: true });
+});
+
+client.on('loading_screen', (percent, message) => {
+    console.log(`Cargando WhatsApp Web: ${percent}% - ${message}`);
+});
+
+client.on('authenticated', () => {
+    console.log('Autenticación correcta en WhatsApp.');
+    // Temporizador de respaldo: si en 6s no se ha disparado el evento 'ready', iniciar el proceso
+    setTimeout(() => {
+        if (!processStarted) {
+            console.log('Iniciando procesamiento tras sincronizar la sesión...');
+            iniciarProceso();
+        }
+    }, 6000);
+});
+
+client.on('auth_failure', (msg) => {
+    console.error('Error de autenticación en WhatsApp:', msg);
+});
+
+client.on('ready', async () => {
+    await iniciarProceso();
 });
 
 client.initialize();
