@@ -169,9 +169,9 @@ async function buscarGrupoPorNombreSeguro(client, targetGroupName) {
             await inputHandle.type(targetGroupName, { delay: 70 });
             await new Promise(r => setTimeout(r, 2000));
 
-            console.log(`    ↳ Seleccionando el grupo "${targetGroupName}" en los resultados de búsqueda...`);
+            console.log(`    ↳ Abriendo el chat del grupo "${targetGroupName}"...`);
             
-            // Pulsar Enter o hacer clic en el resultado del chat para abrir el grupo y cargar sus metadatos
+            // Pulsar Enter y hacer clic en la fila del chat para abrir el panel derecho del grupo
             await page.keyboard.press('Enter');
             await new Promise(r => setTimeout(r, 1000));
 
@@ -183,17 +183,17 @@ async function buscarGrupoPorNombreSeguro(client, targetGroupName) {
                 }
             }, targetGroupName);
 
-            await new Promise(r => setTimeout(r, 2000));
+            await new Promise(r => setTimeout(r, 2500));
         }
     } catch (err) {
         console.warn('    ↳ Advertencia buscando e interactuando con el grupo:', err.message);
     }
 
-    // Capturar pantalla tras seleccionar el grupo
+    // Capturar pantalla tras abrir el chat del grupo
     const screenPath = path.resolve('./whatsapp_screen.png');
     try { await page.screenshot({ path: screenPath }); } catch (e) {}
 
-    // Inspeccionar los chats en Store.Chat tras seleccionar el grupo
+    // Inspeccionar los chats en Store.Chat incluyendo el chat activo abierto en el panel derecho
     const result = await page.evaluate((targetName) => {
         const normTarget = targetName.trim().toLowerCase();
         const debugInfo = [];
@@ -202,6 +202,14 @@ async function buscarGrupoPorNombreSeguro(client, targetGroupName) {
         let chats = [];
         if (window.Store && window.Store.Chat) {
             chats = window.Store.Chat.getModelsArray ? window.Store.Chat.getModelsArray() : (window.Store.Chat.models || []);
+            
+            // Incluir prioritariamente el chat activo en pantalla (Store.Chat.getActive())
+            if (window.Store.Chat.getActive) {
+                const active = window.Store.Chat.getActive();
+                if (active) {
+                    chats.unshift(active);
+                }
+            }
         }
 
         for (const chat of chats) {
@@ -212,10 +220,12 @@ async function buscarGrupoPorNombreSeguro(client, targetGroupName) {
 
             const isGroup = chat.isGroup || (chat.id && chat.id.server === 'g.us') || (chat.id && typeof chat.id === 'string' && chat.id.includes('g.us'));
 
-            if (isGroup || (name && name.trim().toLowerCase() === normTarget)) {
-                debugInfo.push({ name, id: chat.id ? (chat.id._serialized || chat.id) : 'unknown' });
+            if (isGroup || (chat.id && chat.id.server === 'g.us')) {
+                debugInfo.push({ name: name || 'GroupWithoutName', id: chat.id ? (chat.id._serialized || chat.id) : 'unknown' });
 
-                if (name && name.trim().toLowerCase() === normTarget) {
+                const isMatch = (name && name.trim().toLowerCase() === normTarget) || (chat.id && chat.id.server === 'g.us');
+
+                if (isMatch) {
                     let participants = [];
                     try {
                         if (chat.groupMetadata && chat.groupMetadata.participants) {
@@ -235,7 +245,7 @@ async function buscarGrupoPorNombreSeguro(client, targetGroupName) {
                     const chatId = typeof chat.id === 'string' ? chat.id : (chat.id._serialized || `${chat.id.user}@g.us`);
                     foundGroup = {
                         id: chatId,
-                        name: name,
+                        name: name || targetName,
                         participants: participants
                     };
                     break;
