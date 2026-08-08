@@ -8,11 +8,11 @@ const { getAuthenticatedClient, sincronizarContactoGoogle } = require('./googleC
 
 // Cargar variables de entorno con valores por defecto
 const GROUP_NAME = process.env.GROUP_NAME || 'Nombre De Tu Grupo';
-const CSV_PATH = path.resolve(process.env.CSV_PATH || './contactos.csv');
-const PHONE_COLUMN = process.env.PHONE_COLUMN || 'telefono';
-const NAME_COLUMN = process.env.NAME_COLUMN || 'nombre';
+const CSV_PATH = path.resolve(process.env.CSV_PATH || './cd_cigales_20260808_jugador.csv');
+const PHONE_COLUMN = process.env.PHONE_COLUMN || 'Teléfono tutor';
+const NAME_COLUMN = process.env.NAME_COLUMN || 'Nombre tutor';
 
-// Columnas para Google Contacts (si existen en el CSV)
+// Columnas para Google Contacts: "Nombre tutor", "Teléfono tutor", "Nombre", "Apellidos", "Equipos"
 const TUTOR_NAME_COLUMN = process.env.TUTOR_NAME_COLUMN || 'Nombre tutor';
 const PLAYER_NAME_COLUMN = process.env.PLAYER_NAME_COLUMN || 'Nombre';
 const PLAYER_SURNAME_COLUMN = process.env.PLAYER_SURNAME_COLUMN || 'Apellidos';
@@ -37,7 +37,7 @@ function randomDelay(min, max) {
 }
 
 /**
- * Normaliza un teléfono a formato internacional (ej: "34612345678")
+ * Normaliza un teléfono a formato internacional (ej: "34652924590")
  */
 function normalizarTelefono(rawPhone) {
     if (!rawPhone) return null;
@@ -46,6 +46,11 @@ function normalizarTelefono(rawPhone) {
     let clean = rawPhone.toString().replace(/\D/g, '');
 
     if (!clean) return null;
+
+    // Si el número empieza por 0034, eliminar los ceros iniciales
+    if (clean.startsWith('0034')) {
+        clean = clean.substring(2);
+    }
 
     // Si el número tiene 9 dígitos (formato local en España), anteponer prefijo por defecto
     if (clean.length === 9 && DEFAULT_COUNTRY_CODE) {
@@ -56,7 +61,7 @@ function normalizarTelefono(rawPhone) {
 }
 
 /**
- * Lee el archivo CSV y retorna la lista de contactos estructurada
+ * Lee el archivo CSV y retorna la lista de contactos adaptada
  */
 function cargarContactosDesdeCSV(filePath) {
     return new Promise((resolve, reject) => {
@@ -71,26 +76,27 @@ function cargarContactosDesdeCSV(filePath) {
                 const rawPhone = row[PHONE_COLUMN];
                 const phoneNorm = normalizarTelefono(rawPhone);
 
-                // Construcción del nombre formateado para Google Contacts
-                const tutor = (row[TUTOR_NAME_COLUMN] || '').trim();
+                const tutor = (row[TUTOR_NAME_COLUMN] || row[NAME_COLUMN] || 'Tutor').trim();
                 const player = (row[PLAYER_NAME_COLUMN] || '').trim();
                 const surname = (row[PLAYER_SURNAME_COLUMN] || '').trim();
                 const team = (row[PLAYER_TEAM_COLUMN] || '').trim();
 
-                let formattedName = '';
-                if (tutor && (player || surname)) {
+                // Construcción de nombres específicos
+                const whatsappName = tutor;
+                
+                let googleName = '';
+                if (player || surname) {
                     const fullPlayer = `${player} ${surname}`.trim();
                     const teamStr = team ? ` (${team})` : '';
-                    formattedName = `${tutor} - ${fullPlayer}${teamStr}`;
-                } else if (row[NAME_COLUMN]) {
-                    formattedName = row[NAME_COLUMN].trim();
+                    googleName = `${tutor} - ${fullPlayer}${teamStr}`;
                 } else {
-                    formattedName = tutor || player || 'Contacto sin nombre';
+                    googleName = tutor;
                 }
 
                 if (phoneNorm) {
                     contactos.push({
-                        nombre: formattedName,
+                        whatsappName,
+                        googleName,
                         tutor,
                         player,
                         surname,
@@ -198,14 +204,14 @@ client.on('ready', async () => {
             const contacto = contactos[i];
             const prefixLog = `[${i + 1}/${contactos.length}]`;
 
-            console.log(`${prefixLog} Procesando: ${contacto.nombre} (${contacto.phone})`);
+            console.log(`${prefixLog} Procesando tutor: ${contacto.whatsappName} (${contacto.phone})`);
 
             // 4a. Sincronizar opcionalmente en Google Contacts
             if (SYNC_GOOGLE_CONTACTS && googleAuthClient) {
                 const resGoogle = await sincronizarContactoGoogle({
                     authClient: googleAuthClient,
                     phone: contacto.phone,
-                    formattedName: contacto.nombre,
+                    formattedName: contacto.googleName,
                     isDryRun: IS_DRY_RUN
                 });
 
@@ -216,10 +222,10 @@ client.on('ready', async () => {
 
             // 4b. Comprobar si el contacto ya pertenece al grupo de WhatsApp
             if (participantesActuales.has(contacto.jid)) {
-                console.log(`    ↳ [OMITIDO WHATSAPP] Ya es miembro del grupo.`);
+                console.log(`    ↳ [OMITIDO WHATSAPP] ${contacto.whatsappName} ya es miembro del grupo.`);
                 stats.yaEnGrupo++;
             } else {
-                console.log(`    ↳ [AÑADIENDO WHATSAPP] Añadiendo al grupo...`);
+                console.log(`    ↳ [AÑADIENDO WHATSAPP] Añadiendo a ${contacto.whatsappName} (${contacto.phone}) al grupo...`);
 
                 if (IS_DRY_RUN) {
                     console.log(`        ↳ [SIMULACIÓN] Se añadiría ${contacto.jid} al grupo.`);
