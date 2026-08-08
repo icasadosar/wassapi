@@ -24,10 +24,8 @@ async function getAuthenticatedClient(credentialsPath, tokenPath) {
         throw new Error('El archivo credentials.json no contiene una clave válida de "installed" o "web".');
     }
 
-    // Determinar la URI de redireccionamiento preferida
     let redirectUri = 'http://localhost:3000/oauth2callback';
     if (keys.redirect_uris && keys.redirect_uris.length > 0) {
-        // Filtrar URIs válidas (evitando la obsoleta urn:ietf:wg:oauth:2.0:oob si es posible)
         const validUri = keys.redirect_uris.find(u => !u.includes('urn:ietf:wg:oauth:2.0:oob'));
         if (validUri) {
             redirectUri = validUri;
@@ -42,30 +40,26 @@ async function getAuthenticatedClient(credentialsPath, tokenPath) {
         redirectUri
     );
 
-    // Comprobar si ya tenemos un token guardado
     if (fs.existsSync(tokenPath)) {
         const token = fs.readFileSync(tokenPath, 'utf8');
         oAuth2Client.setCredentials(JSON.parse(token));
         return oAuth2Client;
     }
 
-    // Si no hay token, solicitar autorización interactiva mediante servidor local
     return await getNewToken(oAuth2Client, tokenPath, redirectUri);
 }
 
 /**
- * Obtiene un nuevo token de acceso iniciando un servidor HTTP local para capturar la respuesta OAuth2
+ * Obtiene un nuevo token de acceso iniciando un servidor HTTP local
  */
 function getNewToken(oAuth2Client, tokenPath, redirectUri) {
     return new Promise((resolve, reject) => {
         let server;
         let port = 3000;
-        let pathname = '/oauth2callback';
 
         try {
             const parsed = new URL(redirectUri);
             if (parsed.port) port = parseInt(parsed.port, 10);
-            if (parsed.pathname && parsed.pathname !== '/') pathname = parsed.pathname;
         } catch (e) {}
 
         server = http.createServer((req, res) => {
@@ -172,12 +166,11 @@ async function sincronizarContactoGoogle({
     const targetDigits = soloDigitos(phone);
 
     if (!targetDigits) {
-        console.warn(`[GOOGLE CONTACTS] Teléfono no válido para sincronización:`, phone);
+        console.warn(`    ↳ [OMITIDO GOOGLE] Teléfono no válido para sincronización:`, phone);
         return { action: 'skipped', reason: 'invalid_phone' };
     }
 
     try {
-        // Buscar contactos mediante la API de búsqueda
         const searchRes = await service.people.searchContacts({
             query: phone,
             readMask: 'names,phoneNumbers',
@@ -186,7 +179,6 @@ async function sincronizarContactoGoogle({
         const matches = searchRes.data.results || [];
         let existingContact = null;
 
-        // Comprobar coincidencia exacta por dígitos de teléfono
         for (const match of matches) {
             const person = match.person;
             const phoneNumbers = person.phoneNumbers || [];
@@ -206,14 +198,14 @@ async function sincronizarContactoGoogle({
             const currentName = currentNameObj ? currentNameObj.displayName : '';
 
             if (currentName === formattedName) {
-                console.log(`    ↳ [GOOGLE CONTACTS] El contacto (${phone}) ya tiene el nombre actualizado: "${formattedName}".`);
+                console.log(`    ↳ [OMITIDO GOOGLE] Contacto (${phone}) ya tiene el nombre al día: "${formattedName}".`);
                 return { action: 'updated_skipped', resourceName: existingContact.resourceName };
             }
 
-            console.log(`    ↳ [GOOGLE CONTACTS] Contacto encontrado (${currentName}). Modificando nombre a: "${formattedName}"...`);
+            console.log(`    ↳ [MODIFICANDO GOOGLE] Contacto existente (${currentName}). Cambiando nombre a: "${formattedName}"...`);
 
             if (isDryRun) {
-                console.log(`        ↳ [SIMULACIÓN] Se actualizaría el contacto ${existingContact.resourceName}`);
+                console.log(`        ↳ [SIMULACIÓN GOOGLE] Se actualizaría el contacto a "${formattedName}".`);
                 return { action: 'simulated_update', resourceName: existingContact.resourceName };
             }
 
@@ -230,13 +222,13 @@ async function sincronizarContactoGoogle({
                 }
             });
 
-            console.log(`        ↳ [ÉXITO GOOGLE] Nombre actualizado correctamente en Google Contacts.`);
+            console.log(`        ↳ [ÉXITO GOOGLE] Nombre actualizado correctamente.`);
             return { action: 'updated', resourceName: updateRes.data.resourceName };
         } else {
-            console.log(`    ↳ [GOOGLE CONTACTS] Contacto (${phone}) no existe en Google Contacts. Creando nuevo contacto: "${formattedName}"...`);
+            console.log(`    ↳ [CREANDO GOOGLE] Contacto (${phone}) no existe. Creando: "${formattedName}"...`);
 
             if (isDryRun) {
-                console.log(`        ↳ [SIMULACIÓN] Se crearía un nuevo contacto con nombre "${formattedName}" y teléfono "+${phone}"`);
+                console.log(`        ↳ [SIMULACIÓN GOOGLE] Se crearía el contacto "${formattedName}" (+${phone}).`);
                 return { action: 'simulated_create' };
             }
 
@@ -260,7 +252,7 @@ async function sincronizarContactoGoogle({
         }
 
     } catch (error) {
-        console.error(`    ↳ [ERROR GOOGLE CONTACTS] Fallo al sincronizar ${phone}:`, error.message);
+        console.error(`    ↳ [ERROR GOOGLE] Fallo al sincronizar ${phone}:`, error.message);
         return { action: 'error', error: error.message };
     }
 }

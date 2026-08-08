@@ -294,10 +294,13 @@ async function iniciarProceso() {
 
     let stats = {
         totalCSV: 0,
-        yaEnGrupo: 0,
+        yaEnGrupoWhatsApp: 0,
         añadidosWhatsApp: 0,
         fallidosWhatsApp: 0,
-        sincronizadosGoogle: 0
+        creadosGoogle: 0,
+        actualizadosGoogle: 0,
+        omitidosGoogle: 0,
+        fallidosGoogle: 0
     };
 
     try {
@@ -353,20 +356,26 @@ async function iniciarProceso() {
                     isDryRun: IS_DRY_RUN
                 });
 
-                if (['created', 'updated', 'simulated_create', 'simulated_update'].includes(resGoogle.action)) {
-                    stats.sincronizadosGoogle++;
+                if (['created', 'simulated_create'].includes(resGoogle.action)) {
+                    stats.creadosGoogle++;
+                } else if (['updated', 'simulated_update'].includes(resGoogle.action)) {
+                    stats.actualizadosGoogle++;
+                } else if (resGoogle.action === 'updated_skipped') {
+                    stats.omitidosGoogle++;
+                } else if (resGoogle.action === 'error') {
+                    stats.fallidosGoogle++;
                 }
             }
 
             // 4b. Comprobar si el contacto ya pertenece al grupo de WhatsApp
             if (participantesActuales.has(contacto.jid)) {
                 console.log(`    ↳ [OMITIDO WHATSAPP] ${contacto.whatsappName} ya es miembro del grupo.`);
-                stats.yaEnGrupo++;
+                stats.yaEnGrupoWhatsApp++;
             } else {
                 console.log(`    ↳ [AÑADIENDO WHATSAPP] Añadiendo a ${contacto.whatsappName} (${contacto.phone}) al grupo...`);
 
                 if (IS_DRY_RUN) {
-                    console.log(`        ↳ [SIMULACIÓN] Se añadiría ${contacto.jid} al grupo.`);
+                    console.log(`        ↳ [SIMULACIÓN WHATSAPP] Se añadiría ${contacto.jid} al grupo.`);
                     stats.añadidosWhatsApp++;
                 } else {
                     try {
@@ -391,11 +400,18 @@ async function iniciarProceso() {
         console.log('\n======================================================');
         console.log(' RESUMEN FINAL DEL PROCESO');
         console.log('======================================================');
-        console.log(` Total contactos en CSV:        ${stats.totalCSV}`);
-        console.log(` Sincronizados Google Contacts: ${stats.sincronizadosGoogle}`);
-        console.log(` Omitidos (Ya en WhatsApp):    ${stats.yaEnGrupo}`);
-        console.log(` Añadidos con éxito WhatsApp:  ${stats.añadidosWhatsApp}`);
-        console.log(` Fallidos / Error WhatsApp:    ${stats.fallidosWhatsApp}`);
+        console.log(` Total contactos en CSV:            ${stats.totalCSV}`);
+        console.log(' ----------------------------------------------------');
+        console.log(` WhatsApp - Omitidos (Ya en grupo): ${stats.yaEnGrupoWhatsApp}`);
+        console.log(` WhatsApp - Añadidos con éxito:     ${stats.añadidosWhatsApp}`);
+        console.log(` WhatsApp - Fallidos / Error:        ${stats.fallidosWhatsApp}`);
+        if (SYNC_GOOGLE_CONTACTS) {
+            console.log(' ----------------------------------------------------');
+            console.log(` Google - Creados con éxito:        ${stats.creadosGoogle}`);
+            console.log(` Google - Actualizados con éxito:   ${stats.actualizadosGoogle}`);
+            console.log(` Google - Omitidos (Ya al día):     ${stats.omitidosGoogle}`);
+            console.log(` Google - Fallidos / Error:         ${stats.fallidosGoogle}`);
+        }
         console.log('======================================================\n');
 
     } catch (error) {
