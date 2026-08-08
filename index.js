@@ -110,27 +110,58 @@ function cargarContactosDesdeCSV(filePath) {
 }
 
 /**
+ * Cierra modales/popups flotantes de WhatsApp Web ("What's new on WhatsApp Web")
+ */
+async function cerrarModalesWhatsApp(page) {
+    try {
+        await page.keyboard.press('Escape');
+        await new Promise(r => setTimeout(r, 500));
+        await page.keyboard.press('Escape');
+
+        await page.evaluate(() => {
+            // Buscar elementos de cierre de modales flotantes
+            const elements = Array.from(document.querySelectorAll('div[role="button"], button, span[data-icon="x"]'));
+            for (const el of elements) {
+                const label = el.getAttribute('aria-label') || '';
+                if (label.toLowerCase().includes('close') || label.toLowerCase().includes('cerrar') || el.innerHTML.includes('x')) {
+                    try { el.click(); } catch(e) {}
+                }
+            }
+        });
+        await new Promise(r => setTimeout(r, 1000));
+    } catch (e) {}
+}
+
+/**
  * Busca un grupo en WhatsApp Web mediante Store e interacción Puppeteer
  */
 async function buscarGrupoPorNombreSeguro(client, targetGroupName) {
     const page = client.pupPage;
 
+    console.log(`    ↳ Cerrando ventanas emergentes de bienvenida si las hubiera...`);
+    await cerrarModalesWhatsApp(page);
+
     console.log(`    ↳ Buscando el grupo "${targetGroupName}" en WhatsApp Web...`);
 
-    // Tomar captura de pantalla para inspección visual
-    const screenPath = path.resolve('./whatsapp_screen.png');
     try {
-        await page.screenshot({ path: screenPath });
-    } catch (e) {}
-
-    try {
-        // Forzar búsqueda en la barra de texto si está presente
+        // Buscar el icono o barra de búsqueda visual de WhatsApp Web
         const searchInput = await page.$('#side div[contenteditable="true"], div[contenteditable="true"], p.selectable-text');
         if (searchInput) {
             await searchInput.click();
+            await page.keyboard.down('Meta');
+            await page.keyboard.press('A');
+            await page.keyboard.up('Meta');
+            await page.keyboard.press('Backspace');
+
             await page.keyboard.type(targetGroupName, { delay: 50 });
             await new Promise(r => setTimeout(r, 3000));
         }
+
+        // Tomar captura de pantalla actualizada tras realizar la búsqueda
+        const screenPath = path.resolve('./whatsapp_screen.png');
+        try {
+            await page.screenshot({ path: screenPath });
+        } catch (e) {}
 
         // Inspeccionar chats en Store
         const result = await page.evaluate((targetName) => {
@@ -374,7 +405,6 @@ client.on('loading_screen', (percent, message) => {
 
 client.on('authenticated', () => {
     console.log('Autenticación correcta en WhatsApp.');
-    // Temporizador de respaldo: si en 6s no se ha disparado el evento 'ready', iniciar el proceso
     setTimeout(() => {
         if (!processStarted) {
             console.log('Iniciando procesamiento tras sincronizar la sesión...');
