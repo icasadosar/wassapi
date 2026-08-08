@@ -56,17 +56,17 @@ GOOGLE_TOKEN_PATH="./token.json"
 
 ---
 
-## 📄 Formato del archivo CSV (`contactos_temp.csv`)
+## 📄 Formato del archivo CSV (`contactos.csv`)
 
-Ejemplo de `contactos_temp.csv`:
+Ejemplo de `contactos.csv`:
 ```csv
 Nombre tutor,Teléfono tutor,Nombre,Apellidos,Equipos
-Verónica,0034652924590,Unai,Coloma López,Infantil (2013-2014)
-Angelica,0034654909054,José Luis,Martín Plaza,Infantil (2013-2014)
+Juan Perez,0034600000001,Lucas,Perez Gomez,Infantil (2013-2014)
+Maria Garcia,0034600000002,Ana,Martin Garcia,Infantil (2013-2014)
 ```
 
 Formato del nombre generado para Google Contacts:
-`Verónica - Unai Coloma López (Infantil (2013-2014))`
+`Juan Perez - Lucas Perez Gomez (Infantil (2013-2014))`
 
 ---
 
@@ -82,7 +82,7 @@ Para activar la sincronización con Google Contacts:
    ```env
    SYNC_GOOGLE_CONTACTS=true
    ```
-   *(O ejecuta pasándole la bandera `--sync-google-contacts`)*.
+   *(O ejecuta pasándole el comando `npm run dry-run:google`)*.
 6. En la primera ejecución, el script te dará una URL para autorizar el acceso en tu navegador y pegar el código en la consola. El token de sesión se guardará en `token.json`.
 
 ---
@@ -97,7 +97,7 @@ npm run dry-run
 
 Para probar la simulación con Google Contacts activado:
 ```bash
-npm run dry-run -- --sync-google-contacts
+npm run dry-run:google
 ```
 
 ### Modo Producción (Añadir contactos reales)
