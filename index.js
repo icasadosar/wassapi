@@ -137,26 +137,24 @@ async function limpiarPantallaWhatsApp(page) {
 }
 
 /**
- * Busca un grupo enfocando directamente el elemento <INPUT role="textbox"> de la barra de búsqueda
+ * Busca un grupo escribiendo en el <input> de búsqueda, seleccionándolo y extrayendo los participantes
  */
 async function buscarGrupoPorNombreSeguro(client, targetGroupName) {
     const page = client.pupPage;
 
     const searchSelector = 'input[aria-label="Search or start a new chat"], input[role="textbox"], input.html-input';
 
-    console.log(`    ↳ Esperando a que el elemento <input> de búsqueda esté listo...`);
+    console.log(`    ↳ Esperando el elemento de búsqueda...`);
     try {
         await page.waitForSelector(searchSelector, { timeout: 20000 });
-    } catch (e) {
-        console.warn('    ↳ Tiempo de espera agotado buscando el selector del input.');
-    }
+    } catch (e) {}
 
     await limpiarPantallaWhatsApp(page);
 
     try {
         const inputHandle = await page.$(searchSelector);
         if (inputHandle) {
-            console.log(`    ↳ Selector <input> localizado. Haciendo clic e ingresando "${targetGroupName}"...`);
+            console.log(`    ↳ Escribiendo "${targetGroupName}" en el buscador...`);
             await inputHandle.click();
             await new Promise(r => setTimeout(r, 300));
 
@@ -167,23 +165,35 @@ async function buscarGrupoPorNombreSeguro(client, targetGroupName) {
             await page.keyboard.press('Backspace');
             await new Promise(r => setTimeout(r, 200));
 
-            // Escribir directamente sobre el campo de texto
+            // Escribir el término de búsqueda
             await inputHandle.type(targetGroupName, { delay: 70 });
-            console.log(`    ↳ Búsqueda "${targetGroupName}" escrita con éxito en el input. Esperando 4s...`);
+            await new Promise(r => setTimeout(r, 2000));
 
-            await new Promise(r => setTimeout(r, 4000));
-        } else {
-            console.warn('    ↳ No se pudo obtener el handle del elemento input.');
+            console.log(`    ↳ Seleccionando el grupo "${targetGroupName}" en los resultados de búsqueda...`);
+            
+            // Pulsar Enter o hacer clic en el resultado del chat para abrir el grupo y cargar sus metadatos
+            await page.keyboard.press('Enter');
+            await new Promise(r => setTimeout(r, 1000));
+
+            await page.evaluate((targetName) => {
+                const spans = Array.from(document.querySelectorAll('#pane-side span, #side span, div[role="listitem"] span'));
+                const match = spans.find(s => s.innerText && s.innerText.trim().toLowerCase() === targetName.trim().toLowerCase());
+                if (match) {
+                    try { match.click(); } catch(e) {}
+                }
+            }, targetGroupName);
+
+            await new Promise(r => setTimeout(r, 2000));
         }
     } catch (err) {
-        console.warn('    ↳ Advertencia interactuando con el input de búsqueda:', err.message);
+        console.warn('    ↳ Advertencia buscando e interactuando con el grupo:', err.message);
     }
 
-    // Tomar captura de pantalla tras la búsqueda
+    // Capturar pantalla tras seleccionar el grupo
     const screenPath = path.resolve('./whatsapp_screen.png');
     try { await page.screenshot({ path: screenPath }); } catch (e) {}
 
-    // Inspeccionar los chats en Store.Chat tras realizar la búsqueda
+    // Inspeccionar los chats en Store.Chat tras seleccionar el grupo
     const result = await page.evaluate((targetName) => {
         const normTarget = targetName.trim().toLowerCase();
         const debugInfo = [];
@@ -202,7 +212,7 @@ async function buscarGrupoPorNombreSeguro(client, targetGroupName) {
 
             const isGroup = chat.isGroup || (chat.id && chat.id.server === 'g.us') || (chat.id && typeof chat.id === 'string' && chat.id.includes('g.us'));
 
-            if (isGroup) {
+            if (isGroup || (name && name.trim().toLowerCase() === normTarget)) {
                 debugInfo.push({ name, id: chat.id ? (chat.id._serialized || chat.id) : 'unknown' });
 
                 if (name && name.trim().toLowerCase() === normTarget) {
@@ -237,7 +247,7 @@ async function buscarGrupoPorNombreSeguro(client, targetGroupName) {
     }, targetGroupName);
 
     if (result && result.debugInfo && result.debugInfo.length > 0) {
-        console.log('    [DIAGNÓSTICO] Grupos detectados tras la búsqueda UI:');
+        console.log('    [DIAGNÓSTICO] Grupos detectados en memoria activa:');
         result.debugInfo.forEach(g => console.log(`      - "${g.name}" (ID: ${g.id})`));
     }
 
