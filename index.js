@@ -201,6 +201,27 @@ function cargarContactosDesdeCSV(filePath) {
 async function limpiarPantallaWhatsApp(page) {
     console.log('    ↳ Limpiando pantalla y cerrando visores de imágenes/diálogos...');
     
+    // Auto-descartar diálogo de "Discard change?" si existiera de ejecuciones previas
+    try {
+        await page.evaluate(() => {
+            const dialogs = Array.from(document.querySelectorAll('div[role="dialog"], div[role="alertdialog"]'));
+            const discardDialog = dialogs.find(d => {
+                const txt = (d.innerText || '').toLowerCase();
+                return txt.includes('discard change') || txt.includes('descartar');
+            });
+            if (discardDialog) {
+                const discardBtn = Array.from(discardDialog.querySelectorAll('button, div[role="button"]')).find(b => {
+                    const txt = (b.innerText || '').toLowerCase();
+                    return txt.includes('discard') || txt.includes('descartar');
+                });
+                if (discardBtn) {
+                    discardBtn.click();
+                }
+            }
+        });
+        await new Promise(r => setTimeout(r, 400));
+    } catch (e) {}
+
     for (let i = 0; i < 3; i++) {
         try {
             await page.keyboard.press('Escape');
@@ -230,6 +251,9 @@ async function añadirParticipantePorUI(page, phone, contactoOrName = '') {
     const googleName = typeof contactoOrName === 'object' ? (contactoOrName.googleName || '') : '';
     const player = typeof contactoOrName === 'object' ? (contactoOrName.player || '') : '';
     const surname = typeof contactoOrName === 'object' ? (contactoOrName.surname || '') : '';
+
+    // Limpiar cualquier diálogo o estado previo de forma robusta
+    await limpiarPantallaWhatsApp(page);
 
     console.log(`        ↳ [UI WHATSAPP] Verificando panel de información del grupo activo...`);
 
