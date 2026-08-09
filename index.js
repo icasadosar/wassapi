@@ -223,7 +223,12 @@ async function limpiarPantallaWhatsApp(page) {
 /**
  * Añade un contacto al grupo abierto mediante la interfaz gráfica de WhatsApp Web y clics de ratón nativos CDP
  */
-async function añadirParticipantePorUI(page, phone, tutorName = '') {
+async function añadirParticipantePorUI(page, phone, contactoOrName = '') {
+    const tutorName = typeof contactoOrName === 'object' ? (contactoOrName.tutor || contactoOrName.whatsappName || '') : contactoOrName;
+    const googleName = typeof contactoOrName === 'object' ? (contactoOrName.googleName || '') : '';
+    const player = typeof contactoOrName === 'object' ? (contactoOrName.player || '') : '';
+    const surname = typeof contactoOrName === 'object' ? (contactoOrName.surname || '') : '';
+
     console.log(`        ↳ [UI WHATSAPP] Verificando panel de información del grupo activo...`);
 
     // 1. Verificar si el panel de info ya está abierto; si no, desplegarlo haciendo clic en el título de la cabecera
@@ -322,41 +327,39 @@ async function añadirParticipantePorUI(page, phone, tutorName = '') {
     }
 
     const searchTerms = [
-        phone, // "34642423914" (primer término según captura del usuario)
+        phone,
         phone.length >= 9 ? phone.slice(-9) : phone,
         `+${phone}`,
-        tutorName
+        tutorName,
+        googleName,
+        player,
+        surname
     ].filter(Boolean);
 
     let contactSelected = false;
 
     for (const term of searchTerms) {
-        // Limpieza nativa y disparo explícito de eventos React en contenteditable
-        await page.evaluate((el, textToSet) => {
-            el.focus();
-            el.innerText = '';
-            el.textContent = '';
-            el.innerHTML = '';
-            const range = document.createRange();
-            range.selectNodeContents(el);
-            const sel = window.getSelection();
-            sel.removeAllRanges();
-            sel.addRange(range);
-            el.dispatchEvent(new Event('input', { bubbles: true }));
-        }, modalInputHandle, term);
-
-        await page.keyboard.press('Backspace');
+        // Clic físico en la caja de búsqueda del modal para situar el foco del cursor
+        await hacerClicFisicoCDP(page, () => {
+            const dialogs = Array.from(document.querySelectorAll('div[role="dialog"]'));
+            if (dialogs.length === 0) return null;
+            const dialog = dialogs[dialogs.length - 1];
+            const input = dialog.querySelector('div[contenteditable="true"], input');
+            if (!input) return null;
+            const r = input.getBoundingClientRect();
+            return { x: r.left, y: r.top, width: r.width, height: r.height };
+        });
         await new Promise(r => setTimeout(r, 200));
 
-        await modalInputHandle.type(term, { delay: 60 });
+        // Limpiar el texto con execCommand nativo de edición de navegador
+        await page.evaluate(() => {
+            document.execCommand('selectAll', false, null);
+            document.execCommand('delete', false, null);
+        });
+        await new Promise(r => setTimeout(r, 150));
 
-        // Disparar evento synthetic input para refrescar la lista en React WhatsApp Web
-        await page.evaluate((el, textToSet) => {
-            el.focus();
-            const ev = new InputEvent('input', { bubbles: true, cancelable: true, inputType: 'insertText', data: textToSet });
-            el.dispatchEvent(ev);
-        }, modalInputHandle, term);
-
+        // Escribir el término de búsqueda carácter por carácter con retraso simulado
+        await page.keyboard.type(term, { delay: 60 });
         await new Promise(r => setTimeout(r, 2500));
 
         // Diagnóstico detallado del modal tras buscar el término
@@ -388,9 +391,11 @@ async function añadirParticipantePorUI(page, phone, tutorName = '') {
             const phone9 = phone.length >= 9 ? phone.slice(-9) : phone;
             const tutorClean = tutorName.trim().toLowerCase();
             const tutorFirstWord = tutorClean.split(' ')[0];
+            const playerClean = player.trim().toLowerCase();
 
             const match = candidates.find(el => {
                 const rect = el.getBoundingClientRect();
+                // Una fila de contacto individual en el modal de WhatsApp mide entre 30px y 100px de altura
                 if (rect.height < 30 || rect.height > 100 || rect.width < 100) return false;
 
                 const txt = (el.innerText || '').trim().toLowerCase();
@@ -401,8 +406,9 @@ async function añadirParticipantePorUI(page, phone, tutorName = '') {
 
                 const hasPhone = txt.includes(phoneFull) || txt.includes(phone9);
                 const hasTutor = (tutorClean.length >= 3 && txt.includes(tutorClean)) || (tutorFirstWord.length >= 4 && txt.includes(tutorFirstWord));
+                const hasPlayer = playerClean.length >= 3 && txt.includes(playerClean);
 
-                return hasPhone || hasTutor;
+                return hasPhone || hasTutor || hasPlayer;
             });
 
             if (!match) return null;
@@ -648,7 +654,7 @@ async function buscarGrupoPorNombreSeguro(client, targetGroupName) {
         id: { _serialized: groupJid },
         participants: allParticipants,
         names: namesSet,
-        addParticipants: async (jids, tutorName = '') => {
+        addParticipants: async (jids, contactoData = '') => {
             // 1. Probar la API interna de Store.GroupParticipants en el navegador
             try {
                 const storeResult = await page.evaluate(async (gJid, participantJids) => {
@@ -697,7 +703,7 @@ async function buscarGrupoPorNombreSeguro(client, targetGroupName) {
 
             // 3. Ejecutar automatización visual UI en Puppeteer mediante clics de ratón nativos CDP
             const phone = jids[0].replace(/\D/g, '');
-            return await añadirParticipantePorUI(page, phone, tutorName);
+            return await añadirParticipantePorUI(page, phone, contactoData);
         }
     };
 }
@@ -855,7 +861,7 @@ async function iniciarProceso() {
                     stats.añadidosWhatsApp++;
                 } else {
                     try {
-                        const result = await grupo.addParticipants([contacto.jid], contacto.whatsappName);
+                        const result = await grupo.addParticipants([contacto.jid], contacto);
                         const isSuccess = result && (result.status === 'success_ui' || result.status === 'success_native' || result.status === 'success_store' || Array.isArray(result));
 
                         if (isSuccess) {
