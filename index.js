@@ -268,27 +268,44 @@ async function añadirParticipantePorUI(page, phone, contactoOrName = '') {
     });
 
     if (!panelAlreadyOpen) {
-        console.log(`        ↳ Abriendo panel de información con clic de ratón nativo en la cabecera...`);
-        const headerClicked = await hacerClicFisicoCDP(page, () => {
+        console.log(`        ↳ Abriendo panel de información mediante clic en la cabecera...`);
+        
+        // Intentar clic directo DOM en el título/cabecera
+        await page.evaluate(() => {
             const headers = Array.from(document.querySelectorAll('header'));
             const activeHeader = headers.find(h => h.getBoundingClientRect().left > 250);
-            if (!activeHeader) return null;
-            const titleEl = activeHeader.querySelector('span[title], div[role="button"]') || activeHeader;
-            const r = titleEl.getBoundingClientRect();
-            return { x: r.left, y: r.top, width: 40, height: r.height };
+            if (activeHeader) {
+                // Hacer clic en la sección del título (suele ser el div[role="button"] que contiene el texto de información)
+                const titleArea = activeHeader.querySelector('div[role="button"], span[title]') || activeHeader;
+                titleArea.click();
+            }
+        });
+        await new Promise(r => setTimeout(r, 1500));
+
+        // Verificar si se abrió con éxito. Si no, aplicar el clic físico CDP como respaldo en el centro del título
+        const isOpened = await page.evaluate(() => {
+            const elements = Array.from(document.querySelectorAll('div[role="region"], div[tabindex="-1"], div'));
+            return elements.some(el => {
+                const rect = el.getBoundingClientRect();
+                const txt = (el.innerText || '').toLowerCase();
+                return rect.left > 500 && (txt.includes('member') || txt.includes('participante') || txt.includes('group info') || txt.includes('info del grupo'));
+            });
         });
 
-        if (!headerClicked) {
-            await page.evaluate(() => {
+        if (!isOpened) {
+            console.log(`        ↳ Respaldo: Aplicando clic físico CDP en el centro del título...`);
+            await hacerClicFisicoCDP(page, () => {
                 const headers = Array.from(document.querySelectorAll('header'));
                 const activeHeader = headers.find(h => h.getBoundingClientRect().left > 250);
-                if (activeHeader) {
-                    const titleEl = activeHeader.querySelector('span[title]') || activeHeader;
-                    titleEl.click();
-                }
+                if (!activeHeader) return null;
+                // Buscar el span del título del grupo
+                const titleEl = activeHeader.querySelector('span[title]') || activeHeader.querySelector('div[role="button"]') || activeHeader;
+                const r = titleEl.getBoundingClientRect();
+                // Retornar centro exacto del elemento título
+                return { x: r.left, y: r.top, width: r.width, height: r.height };
             });
+            await new Promise(r => setTimeout(r, 2000));
         }
-        await new Promise(r => setTimeout(r, 2500));
     } else {
         console.log(`        ↳ El panel de información del grupo ya se encuentra desplegado.`);
     }
