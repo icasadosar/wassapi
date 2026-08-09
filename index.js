@@ -322,6 +322,7 @@ async function añadirParticipantePorUI(page, phone, tutorName = '') {
     }
 
     const searchTerms = [
+        phone, // "34642423914" (verificado en captura del usuario que funciona directamente en WhatsApp Web)
         phone.length >= 9 ? phone.slice(-9) : phone,
         `+${phone}`,
         tutorName
@@ -363,7 +364,7 @@ async function añadirParticipantePorUI(page, phone, tutorName = '') {
                 aria: e.getAttribute('aria-label') || '',
                 h: Math.round(e.getBoundingClientRect().height),
                 w: Math.round(e.getBoundingClientRect().width)
-            })).filter(e => e.txt && e.h > 15 && e.h < 200);
+            })).filter(e => e.txt && e.h >= 25 && e.h <= 100);
             return { term: t, textSnippet: (dialog.innerText || '').slice(0, 300).replace(/\n/g, ' | '), candidates: matches.slice(0, 10) };
         }, term);
 
@@ -375,19 +376,27 @@ async function añadirParticipantePorUI(page, phone, tutorName = '') {
             if (dialogs.length === 0) return null;
             const dialog = dialogs[dialogs.length - 1];
 
-            const candidates = Array.from(dialog.querySelectorAll('div[role="checkbox"], div[role="listitem"], div[role="option"], div[role="button"], div[tabindex="-1"], div'));
+            const candidates = Array.from(dialog.querySelectorAll('div[role="checkbox"], div[role="listitem"], div[role="option"], div[role="button"], div[tabindex="-1"], div, label'));
+            const phoneFull = phone;
             const phone9 = phone.length >= 9 ? phone.slice(-9) : phone;
             const tutorClean = tutorName.trim().toLowerCase();
+            const tutorFirstWord = tutorClean.split(' ')[0];
 
             const match = candidates.find(el => {
                 const rect = el.getBoundingClientRect();
-                if (rect.height < 25 || rect.width < 50) return false;
+                // Una fila de contacto individual en el modal de WhatsApp mide entre 30px y 100px de altura
+                if (rect.height < 30 || rect.height > 100 || rect.width < 100) return false;
+
                 const txt = (el.innerText || '').trim().toLowerCase();
+                if (!txt) return false;
+
                 const isExcluded = txt === 'contacts' || txt === 'contactos' || txt === 'search' || txt === 'buscar' || txt.includes('add member') || txt.includes('add members') || txt.includes('cancel');
                 if (isExcluded) return false;
 
-                // Coincidencia estricta: debe contener el teléfono o el nombre del tutor
-                return txt.includes(phone9) || (tutorClean.length >= 3 && txt.includes(tutorClean));
+                const hasPhone = txt.includes(phoneFull) || txt.includes(phone9);
+                const hasTutor = (tutorClean.length >= 3 && txt.includes(tutorClean)) || (tutorFirstWord.length >= 4 && txt.includes(tutorFirstWord));
+
+                return hasPhone || hasTutor;
             });
 
             if (!match) return null;
