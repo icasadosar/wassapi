@@ -262,67 +262,53 @@ async function añadirParticipantePorUI(page, phone, tutorName = '') {
         console.log(`        ↳ El panel de información del grupo ya se encuentra desplegado.`);
     }
 
-    // Diagnóstico de elementos presentes en la barra lateral derecha
-    const rightPaneDiag = await page.evaluate(() => {
-        const elements = Array.from(document.querySelectorAll('div, button, span, p'));
-        const inRightPane = elements.filter(el => {
-            const r = el.getBoundingClientRect();
-            return r.left > 450 && r.width > 10 && r.height > 10;
-        });
-        return inRightPane.map(el => ({
-            tag: el.tagName,
-            role: el.getAttribute('role') || '',
-            icon: el.getAttribute('data-icon') || (el.querySelector('span[data-icon]') ? el.querySelector('span[data-icon]').getAttribute('data-icon') : ''),
-            txt: (el.innerText || el.getAttribute('aria-label') || '').trim().slice(0, 60).replace(/\n/g, ' ')
-        })).filter(e => e.txt && (e.role || e.icon || e.tag === 'BUTTON')).slice(0, 15);
-    });
-
-    console.log('        [DIAGNÓSTICO PANEL DERECHO ELEMENTOS]', JSON.stringify(rightPaneDiag));
-
-    // 2. Clic físico de ratón en 'Add member' / 'Add participant' en el panel derecho (rect.left > 450) con reintento
-    let addBtnClicked = false;
+    // 2. Localizar, desplazar a la vista y hacer clic en el botón 'Add members' / 'Add member'
+    let addBtnOpened = false;
     for (let attempt = 0; attempt < 5; attempt++) {
-        addBtnClicked = await hacerClicFisicoCDP(page, () => {
-            const elements = Array.from(document.querySelectorAll('div[role="button"], button, div[tabindex], span, div'));
-            const target = elements.find(el => {
-                const rect = el.getBoundingClientRect();
-                if (rect.left < 450 || rect.width < 10 || rect.height < 10) return false;
+        const clickCoords = await page.evaluate(() => {
+            const buttons = Array.from(document.querySelectorAll('button, div[role="button"], div[role="group"] div, div[tabindex]'));
+            const target = buttons.find(b => {
+                const rect = b.getBoundingClientRect();
+                if (rect.left < 450) return false;
 
-                const txt = (el.innerText || el.getAttribute('aria-label') || el.getAttribute('title') || '').toLowerCase();
-                const iconEl = el.querySelector('span[data-icon]');
-                const icon = iconEl ? iconEl.getAttribute('data-icon') : (el.getAttribute('data-icon') || '');
+                const txt = (b.innerText || b.getAttribute('aria-label') || '').toLowerCase().trim();
+                const iconEl = b.querySelector('span[data-icon]');
+                const icon = iconEl ? iconEl.getAttribute('data-icon') : (b.getAttribute('data-icon') || '');
 
-                const isAddText = txt.includes('add member') || txt.includes('add participant') || txt.includes('add members') || txt.includes('añadir participante') || txt.includes('añadir miembro') || txt.includes('agregar participante');
+                const isAddText = txt === 'add members' || txt === 'add member' || txt.includes('add member') || txt.includes('add members') || txt.includes('añadir participante') || txt.includes('añadir miembros') || txt.includes('agregar');
                 const isAddIcon = icon === 'person-add' || icon === 'add-user' || icon === 'user-add' || icon === 'plus';
 
                 return isAddText || isAddIcon;
             });
 
-            if (!target) return null;
-            const r = target.getBoundingClientRect();
-            return { x: r.left + r.width / 2, y: r.top + r.height / 2, width: r.width, height: r.height };
+            if (target) {
+                try {
+                    target.scrollIntoView({ block: 'center', behavior: 'instant' });
+                    target.click();
+                    const r = target.getBoundingClientRect();
+                    return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+                } catch(e) {}
+            }
+            return null;
         });
 
-        if (addBtnClicked) {
+        if (clickCoords && clickCoords.x && clickCoords.y) {
+            await page.mouse.move(clickCoords.x, clickCoords.y);
+            await new Promise(r => setTimeout(r, 100));
+            await page.mouse.click(clickCoords.x, clickCoords.y);
+
             const modalOpened = await page.waitForSelector('div[role="dialog"]', { timeout: 3000 }).then(() => true).catch(() => false);
-            if (modalOpened) break;
-            addBtnClicked = false;
+            if (modalOpened) {
+                addBtnOpened = true;
+                break;
+            }
         }
-
-        // Si no lo encuentra, hacer un pequeño scroll hacia abajo en el panel derecho
-        await page.evaluate(() => {
-            const rightPane = Array.from(document.querySelectorAll('div')).find(d => {
-                const rect = d.getBoundingClientRect();
-                return rect.left > 450 && rect.width > 250 && rect.height > 400;
-            });
-            if (rightPane) rightPane.scrollTop += 200;
-        });
 
         await new Promise(r => setTimeout(r, 1000));
     }
 
-    if (!addBtnClicked) {
-        console.warn(`        ↳ [UI WHATSAPP] No se localizó o no se pudo abrir el modal 'Add member' desde el panel desplegado.`);
+    if (!addBtnOpened) {
+        console.warn(`        ↳ [UI WHATSAPP] No se localizó o no se pudo abrir el modal 'Add members' desde el panel desplegado.`);
         return { status: 'add_button_not_found' };
     }
 
@@ -365,21 +351,6 @@ async function añadirParticipantePorUI(page, phone, tutorName = '') {
         await modalInputHandle.type(term, { delay: 60 });
         await new Promise(r => setTimeout(r, 2500));
 
-        // Imprimir diagnóstico del modal emergente para este término de búsqueda
-        const searchDiag = await page.evaluate((t) => {
-            const dialogs = Array.from(document.querySelectorAll('div[role="dialog"]'));
-            if (dialogs.length === 0) return { error: 'no_dialog' };
-            const dialog = dialogs[dialogs.length - 1];
-            const allElements = Array.from(dialog.querySelectorAll('div, span, p, li'));
-            return {
-                term: t,
-                dialogText: (dialog.innerText || '').slice(0, 300).replace(/\n/g, ' | '),
-                elementCount: allElements.length
-            };
-        }, term);
-
-        console.log(`        [DIAGNÓSTICO BUSCADOR "${term}"]`, JSON.stringify(searchDiag));
-
         // 4. Seleccionar el checkbox/item del usuario devuelto mediante clic de ratón nativo
         contactSelected = await hacerClicFisicoCDP(page, () => {
             const dialogs = Array.from(document.querySelectorAll('div[role="dialog"]'));
@@ -389,7 +360,7 @@ async function añadirParticipantePorUI(page, phone, tutorName = '') {
             const candidates = Array.from(dialog.querySelectorAll('div[role="checkbox"], div[role="listitem"], div[role="option"], div[role="button"], div[tabindex="-1"]'));
             const match = candidates.find(el => {
                 const txt = (el.innerText || '').trim().toLowerCase();
-                const isExcluded = txt === 'contacts' || txt === 'contactos' || txt === 'search' || txt === 'buscar' || txt.includes('add member') || txt.includes('cancel');
+                const isExcluded = txt === 'contacts' || txt === 'contactos' || txt === 'search' || txt === 'buscar' || txt.includes('add member') || txt.includes('add members') || txt.includes('cancel');
                 return !isExcluded && txt.length > 2;
             });
 
