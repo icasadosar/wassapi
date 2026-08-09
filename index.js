@@ -351,14 +351,34 @@ async function añadirParticipantePorUI(page, phone, tutorName = '') {
         await modalInputHandle.type(term, { delay: 60 });
         await new Promise(r => setTimeout(r, 2500));
 
+        // Diagnóstico detallado del modal tras buscar el término
+        const searchDiag = await page.evaluate((t) => {
+            const dialogs = Array.from(document.querySelectorAll('div[role="dialog"]'));
+            if (dialogs.length === 0) return { error: 'no_dialog' };
+            const dialog = dialogs[dialogs.length - 1];
+            const elems = Array.from(dialog.querySelectorAll('div, span, li, p'));
+            const matches = elems.map(e => ({
+                txt: (e.innerText || '').trim().slice(0, 80).replace(/\n/g, ' '),
+                role: e.getAttribute('role') || '',
+                aria: e.getAttribute('aria-label') || '',
+                h: Math.round(e.getBoundingClientRect().height),
+                w: Math.round(e.getBoundingClientRect().width)
+            })).filter(e => e.txt && e.h > 15 && e.h < 200);
+            return { term: t, textSnippet: (dialog.innerText || '').slice(0, 300).replace(/\n/g, ' | '), candidates: matches.slice(0, 10) };
+        }, term);
+
+        console.log(`        [DIAGNÓSTICO BUSCADOR "${term}"]`, JSON.stringify(searchDiag));
+
         // 4. Seleccionar el checkbox/item del usuario devuelto mediante clic de ratón nativo
         contactSelected = await hacerClicFisicoCDP(page, () => {
             const dialogs = Array.from(document.querySelectorAll('div[role="dialog"]'));
             if (dialogs.length === 0) return null;
             const dialog = dialogs[dialogs.length - 1];
 
-            const candidates = Array.from(dialog.querySelectorAll('div[role="checkbox"], div[role="listitem"], div[role="option"], div[role="button"], div[tabindex="-1"]'));
+            const candidates = Array.from(dialog.querySelectorAll('div[role="checkbox"], div[role="listitem"], div[role="option"], div[role="button"], div[tabindex="-1"], div'));
             const match = candidates.find(el => {
+                const rect = el.getBoundingClientRect();
+                if (rect.height < 25 || rect.width < 50) return false;
                 const txt = (el.innerText || '').trim().toLowerCase();
                 const isExcluded = txt === 'contacts' || txt === 'contactos' || txt === 'search' || txt === 'buscar' || txt.includes('add member') || txt.includes('add members') || txt.includes('cancel');
                 return !isExcluded && txt.length > 2;
