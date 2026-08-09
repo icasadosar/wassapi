@@ -226,7 +226,7 @@ async function limpiarPantallaWhatsApp(page) {
 async function añadirParticipantePorUI(page, phone, tutorName = '') {
     console.log(`        ↳ [UI WHATSAPP] Verificando panel de información del grupo activo...`);
 
-    // 1. Verificar si el panel de info ya está abierto
+    // 1. Verificar si el panel de info ya está abierto; si no, desplegarlo haciendo clic en el título de la cabecera
     const panelAlreadyOpen = await page.evaluate(() => {
         const elements = Array.from(document.querySelectorAll('div[role="region"], div[tabindex="-1"], div'));
         return elements.some(el => {
@@ -262,11 +262,28 @@ async function añadirParticipantePorUI(page, phone, tutorName = '') {
         console.log(`        ↳ El panel de información del grupo ya se encuentra desplegado.`);
     }
 
+    // Diagnóstico de elementos presentes en la barra lateral derecha
+    const rightPaneDiag = await page.evaluate(() => {
+        const elements = Array.from(document.querySelectorAll('div, button, span, p'));
+        const inRightPane = elements.filter(el => {
+            const r = el.getBoundingClientRect();
+            return r.left > 450 && r.width > 10 && r.height > 10;
+        });
+        return inRightPane.map(el => ({
+            tag: el.tagName,
+            role: el.getAttribute('role') || '',
+            icon: el.getAttribute('data-icon') || (el.querySelector('span[data-icon]') ? el.querySelector('span[data-icon]').getAttribute('data-icon') : ''),
+            txt: (el.innerText || el.getAttribute('aria-label') || '').trim().slice(0, 60).replace(/\n/g, ' ')
+        })).filter(e => e.txt && (e.role || e.icon || e.tag === 'BUTTON')).slice(0, 15);
+    });
+
+    console.log('        [DIAGNÓSTICO PANEL DERECHO ELEMENTOS]', JSON.stringify(rightPaneDiag));
+
     // 2. Clic físico de ratón en 'Add member' / 'Add participant' en el panel derecho (rect.left > 450) con reintento
     let addBtnClicked = false;
     for (let attempt = 0; attempt < 5; attempt++) {
         addBtnClicked = await hacerClicFisicoCDP(page, () => {
-            const elements = Array.from(document.querySelectorAll('div[role="button"], button, div[tabindex]'));
+            const elements = Array.from(document.querySelectorAll('div[role="button"], button, div[tabindex], span, div'));
             const target = elements.find(el => {
                 const rect = el.getBoundingClientRect();
                 if (rect.left < 450 || rect.width < 10 || rect.height < 10) return false;
@@ -287,11 +304,20 @@ async function añadirParticipantePorUI(page, phone, tutorName = '') {
         });
 
         if (addBtnClicked) {
-            // Verificar si el modal emergente div[role="dialog"] se abrió realmente en la pantalla
             const modalOpened = await page.waitForSelector('div[role="dialog"]', { timeout: 3000 }).then(() => true).catch(() => false);
             if (modalOpened) break;
             addBtnClicked = false;
         }
+
+        // Si no lo encuentra, hacer un pequeño scroll hacia abajo en el panel derecho
+        await page.evaluate(() => {
+            const rightPane = Array.from(document.querySelectorAll('div')).find(d => {
+                const rect = d.getBoundingClientRect();
+                return rect.left > 450 && rect.width > 250 && rect.height > 400;
+            });
+            if (rightPane) rightPane.scrollTop += 200;
+        });
+
         await new Promise(r => setTimeout(r, 1000));
     }
 
@@ -369,7 +395,7 @@ async function añadirParticipantePorUI(page, phone, tutorName = '') {
 
             if (!match) return null;
             const r = match.getBoundingClientRect();
-            return { x: r.left, y: r.top, width: r.width, height: r.height };
+            return { x: r.left + r.width / 2, y: r.top + r.height / 2, width: r.width, height: r.height };
         });
 
         if (contactSelected) break;
@@ -405,7 +431,7 @@ async function añadirParticipantePorUI(page, phone, tutorName = '') {
 
         if (!confirmBtn) return null;
         const r = confirmBtn.getBoundingClientRect();
-        return { x: r.left, y: r.top, width: r.width, height: r.height };
+        return { x: r.left + r.width / 2, y: r.top + r.height / 2, width: r.width, height: r.height };
     });
 
     if (!confirmedCheck) {
@@ -430,7 +456,7 @@ async function añadirParticipantePorUI(page, phone, tutorName = '') {
 
         if (!addBtn) return null;
         const r = addBtn.getBoundingClientRect();
-        return { x: r.left, y: r.top, width: r.width, height: r.height };
+        return { x: r.left + r.width / 2, y: r.top + r.height / 2, width: r.width, height: r.height };
     });
 
     await new Promise(r => setTimeout(r, 3500));
