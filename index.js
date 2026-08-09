@@ -242,18 +242,22 @@ async function añadirParticipantePorUI(page, phone, tutorName = '') {
             const headers = Array.from(document.querySelectorAll('header'));
             const activeHeader = headers.find(h => h.getBoundingClientRect().left > 250);
             if (!activeHeader) return null;
-            const r = activeHeader.getBoundingClientRect();
-            return { x: r.left, y: r.top, width: r.width, height: r.height };
+            const titleEl = activeHeader.querySelector('span[title], div[role="button"]') || activeHeader;
+            const r = titleEl.getBoundingClientRect();
+            return { x: r.left + Math.min(50, r.width / 4), y: r.top + r.height / 2, width: 20, height: 20 };
         });
 
         if (!headerClicked) {
             await page.evaluate(() => {
                 const headers = Array.from(document.querySelectorAll('header'));
                 const activeHeader = headers.find(h => h.getBoundingClientRect().left > 250);
-                if (activeHeader) activeHeader.click();
+                if (activeHeader) {
+                    const titleEl = activeHeader.querySelector('span[title]') || activeHeader;
+                    titleEl.click();
+                }
             });
         }
-        await new Promise(r => setTimeout(r, 2000));
+        await new Promise(r => setTimeout(r, 2500));
     } else {
         console.log(`        ↳ El panel de información del grupo ya se encuentra desplegado.`);
     }
@@ -308,7 +312,7 @@ async function añadirParticipantePorUI(page, phone, tutorName = '') {
     let contactSelected = false;
 
     for (const term of searchTerms) {
-        // Limpieza nativa y robusta de contenteditable en todos los SO (macOS / Linux / Windows)
+        // Limpieza nativa y robusta de contenteditable en todos los SO
         await page.evaluate(el => {
             el.focus();
             el.innerText = '';
@@ -329,16 +333,32 @@ async function añadirParticipantePorUI(page, phone, tutorName = '') {
         await modalInputHandle.type(term, { delay: 60 });
         await new Promise(r => setTimeout(r, 2500));
 
-        // 4. Seleccionar el checkbox del usuario devuelto mediante clic de ratón nativo
+        // Imprimir diagnóstico del modal emergente para este término de búsqueda
+        const searchDiag = await page.evaluate((t) => {
+            const dialogs = Array.from(document.querySelectorAll('div[role="dialog"]'));
+            if (dialogs.length === 0) return { error: 'no_dialog' };
+            const dialog = dialogs[dialogs.length - 1];
+            const allElements = Array.from(dialog.querySelectorAll('div, span, p, li'));
+            return {
+                term: t,
+                dialogText: (dialog.innerText || '').slice(0, 300).replace(/\n/g, ' | '),
+                elementCount: allElements.length
+            };
+        }, term);
+
+        console.log(`        [DIAGNÓSTICO BUSCADOR "${term}"]`, JSON.stringify(searchDiag));
+
+        // 4. Seleccionar el checkbox/item del usuario devuelto mediante clic de ratón nativo
         contactSelected = await hacerClicFisicoCDP(page, () => {
             const dialogs = Array.from(document.querySelectorAll('div[role="dialog"]'));
             if (dialogs.length === 0) return null;
             const dialog = dialogs[dialogs.length - 1];
 
-            const candidates = Array.from(dialog.querySelectorAll('div[role="checkbox"], div[role="listitem"], div[role="option"]'));
+            const candidates = Array.from(dialog.querySelectorAll('div[role="checkbox"], div[role="listitem"], div[role="option"], div[role="button"], div[tabindex="-1"]'));
             const match = candidates.find(el => {
                 const txt = (el.innerText || '').trim().toLowerCase();
-                return txt !== 'contacts' && txt !== 'contactos' && txt.length > 2;
+                const isExcluded = txt === 'contacts' || txt === 'contactos' || txt === 'search' || txt === 'buscar' || txt.includes('add member') || txt.includes('cancel');
+                return !isExcluded && txt.length > 2;
             });
 
             if (!match) return null;
@@ -409,7 +429,7 @@ async function añadirParticipantePorUI(page, phone, tutorName = '') {
 
     await new Promise(r => setTimeout(r, 3500));
 
-    // 7. Verificación Post-Adición Estricta: Comprobar si el participante aparece ahora en el DOM del panel derecho
+    // 7. Verificación Post-Adición Estricta
     const phoneLast9 = phone.length >= 9 ? phone.slice(-9) : phone;
     const isNowPresentInDOM = await page.evaluate(async (tutor, phone9) => {
         const rightPane = Array.from(document.querySelectorAll('div')).find(d => {
@@ -524,7 +544,8 @@ async function buscarGrupoPorNombreSeguro(client, targetGroupName) {
             const headers = Array.from(document.querySelectorAll('header'));
             const activeHeader = headers.find(h => h.getBoundingClientRect().left > 250);
             if (activeHeader) {
-                try { activeHeader.click(); } catch(e) {}
+                const titleEl = activeHeader.querySelector('span[title]') || activeHeader;
+                try { titleEl.click(); } catch(e) {}
             }
         });
         await new Promise(r => setTimeout(r, 2000));
@@ -786,7 +807,6 @@ async function iniciarProceso() {
             if (isAlreadyInGroup) {
                 console.log(`    ↳ [OMITIDO WHATSAPP] ${contacto.whatsappName} (${contacto.phone}) ya es miembro del grupo.`);
                 stats.yaEnGrupoWhatsApp++;
-                guardarEstadoSync(contacto.phone, { whatsappAdded: true });
             } else {
                 console.log(`    ↳ [AÑADIENDO WHATSAPP] Añadiendo a ${contacto.whatsappName} (${contacto.phone}) al grupo...`);
 
