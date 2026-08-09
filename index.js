@@ -140,35 +140,47 @@ async function limpiarPantallaWhatsApp(page) {
  * Añade un contacto al grupo abierto mediante la interfaz gráfica de WhatsApp Web
  */
 async function añadirParticipantePorUI(page, phone) {
-    console.log(`        ↳ [UI WHATSAPP] Desplegando información del grupo (#main header)...`);
+    console.log(`        ↳ [UI WHATSAPP] Abriendo la información del grupo activo (rect.left > 250)...`);
     
-    // 1. Abrir panel de información del grupo haciendo clic específicamente en #main header (panel derecho del chat activo)
+    // 1. Abrir panel de información haciendo clic en la cabecera del chat activo a la derecha (rect.left > 250)
     await page.evaluate(() => {
-        const groupHeader = document.querySelector('#main header div[role="button"], #main header span[title], #main header');
-        if (groupHeader) {
-            try { groupHeader.click(); } catch(e) {}
+        const headers = Array.from(document.querySelectorAll('header'));
+        const activeHeader = headers.find(h => {
+            const rect = h.getBoundingClientRect();
+            return rect.left > 250;
+        });
+
+        if (activeHeader) {
+            try { activeHeader.click(); } catch(e) {}
         }
     });
     await new Promise(r => setTimeout(r, 2000));
 
-    // Diagnóstico de elementos en el panel de información del grupo
+    // Diagnóstico de elementos en la mitad derecha del navegador (rect.left > 500)
     const diagInfo = await page.evaluate(() => {
-        const rightPane = document.querySelector('#main + div, div[role="region"]') || document.body;
-        const elements = Array.from(rightPane.querySelectorAll('div[role="button"], button, span[data-icon], div[title]'));
-        return elements.map(el => ({
-            text: (el.innerText || '').trim(),
-            aria: el.getAttribute('aria-label') || '',
-            icon: el.getAttribute('data-icon') || (el.querySelector('span[data-icon]') ? el.querySelector('span[data-icon]').getAttribute('data-icon') : '')
-        })).filter(i => (i.text && i.text.length < 50) || i.aria || i.icon);
+        const elements = Array.from(document.querySelectorAll('div[role="button"], button, span[data-icon], div[title]'));
+        return elements
+            .filter(el => {
+                const rect = el.getBoundingClientRect();
+                return rect.left > 500;
+            })
+            .map(el => ({
+                text: (el.innerText || '').trim(),
+                aria: el.getAttribute('aria-label') || '',
+                icon: el.getAttribute('data-icon') || (el.querySelector('span[data-icon]') ? el.querySelector('span[data-icon]').getAttribute('data-icon') : '')
+            }))
+            .filter(i => (i.text && i.text.length < 50) || i.aria || i.icon);
     });
 
-    console.log('        [DIAGNÓSTICO PANEL DERECHO GROUP INFO] Elementos localizados:', JSON.stringify(diagInfo.slice(0, 15)));
+    console.log('        [DIAGNÓSTICO PANEL DERECHO DE GRUPO] Botones detectados:', JSON.stringify(diagInfo.slice(0, 15)));
 
-    // 2. Localizar y hacer clic en 'Add member' / 'Add participant' / 'Añadir participante'
+    // 2. Localizar y hacer clic en 'Add member' / 'Add participant' / 'Añadir participante' en el panel derecho (rect.left > 500)
     const addBtnClicked = await page.evaluate(() => {
-        const rightPane = document.querySelector('#main + div, div[role="region"]') || document.body;
-        const clickable = Array.from(rightPane.querySelectorAll('div[role="button"], button, span, div'));
-        const target = clickable.find(el => {
+        const elements = Array.from(document.querySelectorAll('div[role="button"], button, span, div'));
+        const target = elements.find(el => {
+            const rect = el.getBoundingClientRect();
+            if (rect.left < 450) return false; // Ignorar columna izquierda
+
             const txt = (el.innerText || el.getAttribute('aria-label') || el.getAttribute('title') || '').toLowerCase();
             const icon = el.getAttribute('data-icon') || (el.querySelector('span[data-icon]') ? el.querySelector('span[data-icon]').getAttribute('data-icon') : '');
 
@@ -206,10 +218,10 @@ async function añadirParticipantePorUI(page, phone) {
     const contactSelected = await page.evaluate((targetPhone) => {
         const dialog = document.querySelector('div[role="dialog"]') || document.body;
         const items = Array.from(dialog.querySelectorAll('div[role="listitem"], div[role="option"], div[tabindex]'));
+        const last9 = targetPhone.length >= 9 ? targetPhone.slice(-9) : targetPhone;
         
         for (const item of items) {
             const txt = item.innerText || '';
-            const last9 = targetPhone.length >= 9 ? targetPhone.slice(-9) : targetPhone;
             if (txt.includes(last9) || txt.includes('Add') || txt.includes('Añadir')) {
                 try { item.click(); return true; } catch(e) {}
             }
@@ -333,31 +345,39 @@ async function buscarGrupoPorNombreSeguro(client, targetGroupName) {
         console.warn('    ↳ Advertencia obteniendo chats nativos:', e.message);
     }
 
-    // Abrir específicamente la cabecera del chat activo (#main header) para desplegar el panel derecho de Group Info
+    // Abrir la cabecera del chat activo a la derecha (rect.left > 250) para desplegar el panel derecho de Group Info
     try {
         await page.evaluate(() => {
-            const groupHeader = document.querySelector('#main header div[role="button"], #main header span[title], #main header');
-            if (groupHeader) {
-                try { groupHeader.click(); } catch(e) {}
+            const headers = Array.from(document.querySelectorAll('header'));
+            const activeHeader = headers.find(h => {
+                const rect = h.getBoundingClientRect();
+                return rect.left > 250;
+            });
+            if (activeHeader) {
+                try { activeHeader.click(); } catch(e) {}
             }
         });
         await new Promise(r => setTimeout(r, 2000));
     } catch (e) {}
 
-    // Extraer participantes visibles en el DOM del panel derecho
+    // Extraer participantes visibles en el DOM del panel derecho (rect.left > 500)
     const domParticipants = await page.evaluate(() => {
         const set = new Set();
-        const rightPane = document.querySelector('#main + div, div[role="region"]') || document.body;
-        const nodes = rightPane.querySelectorAll('span, div, p');
-        nodes.forEach(n => {
-            const txt = n.innerText ? n.innerText.trim() : '';
-            if (txt.match(/^\+?\d[\d\s-]{8,}\d$/)) {
-                const clean = txt.replace(/\D/g, '');
-                if (clean.length >= 9) {
-                    set.add(`${clean}@c.us`);
+        const nodes = Array.from(document.querySelectorAll('span, div, p'));
+        nodes
+            .filter(n => {
+                const rect = n.getBoundingClientRect();
+                return rect.left > 450;
+            })
+            .forEach(n => {
+                const txt = n.innerText ? n.innerText.trim() : '';
+                if (txt.match(/^\+?\d[\d\s-]{8,}\d$/)) {
+                    const clean = txt.replace(/\D/g, '');
+                    if (clean.length >= 9) {
+                        set.add(`${clean}@c.us`);
+                    }
                 }
-            }
-        });
+            });
         return Array.from(set);
     });
 
