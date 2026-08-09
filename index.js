@@ -125,9 +125,9 @@ async function inyectarStoreWhatsApp(page) {
 /**
  * Realiza un clic de ratón físico nativo utilizando Chrome DevTools Protocol (CDP)
  */
-async function hacerClicFisicoCDP(page, evaluatorFn) {
+async function hacerClicFisicoCDP(page, evaluatorFn, ...args) {
     try {
-        const box = await page.evaluate(evaluatorFn);
+        const box = await page.evaluate(evaluatorFn, ...args);
         if (box && box.width > 0 && box.height > 0) {
             const x = Math.round(box.x + box.width / 2);
             const y = Math.round(box.y + box.height / 2);
@@ -136,7 +136,9 @@ async function hacerClicFisicoCDP(page, evaluatorFn) {
             await page.mouse.click(x, y);
             return true;
         }
-    } catch (e) {}
+    } catch (e) {
+        console.error('        ↳ [ERROR CDP]', e);
+    }
     return false;
 }
 
@@ -381,17 +383,17 @@ async function añadirParticipantePorUI(page, phone, contactoOrName = '') {
         console.log(`        [DIAGNÓSTICO BUSCADOR "${term}"]`, JSON.stringify(searchDiag));
 
         // 4. Seleccionar el checkbox/item del usuario devuelto mediante clic de ratón nativo con coincidencia estricta en el checkbox izquierdo
-        contactSelected = await hacerClicFisicoCDP(page, () => {
+        contactSelected = await hacerClicFisicoCDP(page, (p, t, pl) => {
             const dialogs = Array.from(document.querySelectorAll('div[role="dialog"]'));
             if (dialogs.length === 0) return null;
             const dialog = dialogs[dialogs.length - 1];
 
             const candidates = Array.from(dialog.querySelectorAll('div[role="checkbox"], div[role="listitem"], div[role="option"], div[role="button"], div[tabindex="-1"], div, label'));
-            const phoneFull = phone;
-            const phone9 = phone.length >= 9 ? phone.slice(-9) : phone;
-            const tutorClean = tutorName.trim().toLowerCase();
+            const phoneFull = p;
+            const phone9 = p.length >= 9 ? p.slice(-9) : p;
+            const tutorClean = t.trim().toLowerCase();
             const tutorFirstWord = tutorClean.split(' ')[0];
-            const playerClean = player.trim().toLowerCase();
+            const playerClean = pl.trim().toLowerCase();
 
             const match = candidates.find(el => {
                 const rect = el.getBoundingClientRect();
@@ -423,7 +425,7 @@ async function añadirParticipantePorUI(page, phone, contactoOrName = '') {
             const r = match.getBoundingClientRect();
             // Retornar coordenadas concentradas en la casilla de verificación (checkbox) a la izquierda de la fila (x = left + 30)
             return { x: r.left + 20, y: r.top, width: 20, height: r.height };
-        });
+        }, phone, tutorName, player);
 
         if (contactSelected) break;
     }
