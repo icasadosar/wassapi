@@ -244,7 +244,7 @@ async function añadirParticipantePorUI(page, phone, tutorName = '') {
             if (!activeHeader) return null;
             const titleEl = activeHeader.querySelector('span[title], div[role="button"]') || activeHeader;
             const r = titleEl.getBoundingClientRect();
-            return { x: r.left + Math.min(50, r.width / 4), y: r.top + r.height / 2, width: 20, height: 20 };
+            return { x: r.left, y: r.top, width: 40, height: r.height };
         });
 
         if (!headerClicked) {
@@ -286,16 +286,16 @@ async function añadirParticipantePorUI(page, phone, tutorName = '') {
                     target.scrollIntoView({ block: 'center', behavior: 'instant' });
                     target.click();
                     const r = target.getBoundingClientRect();
-                    return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+                    return { x: r.left, y: r.top, width: r.width, height: r.height };
                 } catch(e) {}
             }
             return null;
         });
 
-        if (clickCoords && clickCoords.x && clickCoords.y) {
-            await page.mouse.move(clickCoords.x, clickCoords.y);
+        if (clickCoords) {
+            await page.mouse.move(clickCoords.x + clickCoords.width / 2, clickCoords.y + clickCoords.height / 2);
             await new Promise(r => setTimeout(r, 100));
-            await page.mouse.click(clickCoords.x, clickCoords.y);
+            await page.mouse.click(clickCoords.x + clickCoords.width / 2, clickCoords.y + clickCoords.height / 2);
 
             const modalOpened = await page.waitForSelector('div[role="dialog"]', { timeout: 3000 }).then(() => true).catch(() => false);
             if (modalOpened) {
@@ -322,7 +322,7 @@ async function añadirParticipantePorUI(page, phone, tutorName = '') {
     }
 
     const searchTerms = [
-        phone, // "34642423914" (verificado en captura del usuario que funciona directamente en WhatsApp Web)
+        phone, // "34642423914" (primer término según captura del usuario)
         phone.length >= 9 ? phone.slice(-9) : phone,
         `+${phone}`,
         tutorName
@@ -331,8 +331,8 @@ async function añadirParticipantePorUI(page, phone, tutorName = '') {
     let contactSelected = false;
 
     for (const term of searchTerms) {
-        // Limpieza nativa y robusta de contenteditable en todos los SO
-        await page.evaluate(el => {
+        // Limpieza nativa y disparo explícito de eventos React en contenteditable
+        await page.evaluate((el, textToSet) => {
             el.focus();
             el.innerText = '';
             el.textContent = '';
@@ -342,14 +342,21 @@ async function añadirParticipantePorUI(page, phone, tutorName = '') {
             const sel = window.getSelection();
             sel.removeAllRanges();
             sel.addRange(range);
-            const ev = new Event('input', { bubbles: true });
-            el.dispatchEvent(ev);
-        }, modalInputHandle);
+            el.dispatchEvent(new Event('input', { bubbles: true }));
+        }, modalInputHandle, term);
 
         await page.keyboard.press('Backspace');
         await new Promise(r => setTimeout(r, 200));
 
         await modalInputHandle.type(term, { delay: 60 });
+
+        // Disparar evento synthetic input para refrescar la lista en React WhatsApp Web
+        await page.evaluate((el, textToSet) => {
+            el.focus();
+            const ev = new InputEvent('input', { bubbles: true, cancelable: true, inputType: 'insertText', data: textToSet });
+            el.dispatchEvent(ev);
+        }, modalInputHandle, term);
+
         await new Promise(r => setTimeout(r, 2500));
 
         // Diagnóstico detallado del modal tras buscar el término
@@ -384,7 +391,6 @@ async function añadirParticipantePorUI(page, phone, tutorName = '') {
 
             const match = candidates.find(el => {
                 const rect = el.getBoundingClientRect();
-                // Una fila de contacto individual en el modal de WhatsApp mide entre 30px y 100px de altura
                 if (rect.height < 30 || rect.height > 100 || rect.width < 100) return false;
 
                 const txt = (el.innerText || '').trim().toLowerCase();
@@ -401,7 +407,7 @@ async function añadirParticipantePorUI(page, phone, tutorName = '') {
 
             if (!match) return null;
             const r = match.getBoundingClientRect();
-            return { x: r.left + r.width / 2, y: r.top + r.height / 2, width: r.width, height: r.height };
+            return { x: r.left, y: r.top, width: r.width, height: r.height };
         });
 
         if (contactSelected) break;
@@ -437,7 +443,7 @@ async function añadirParticipantePorUI(page, phone, tutorName = '') {
 
         if (!confirmBtn) return null;
         const r = confirmBtn.getBoundingClientRect();
-        return { x: r.left + r.width / 2, y: r.top + r.height / 2, width: r.width, height: r.height };
+        return { x: r.left, y: r.top, width: r.width, height: r.height };
     });
 
     await new Promise(r => setTimeout(r, 2500));
@@ -458,7 +464,7 @@ async function añadirParticipantePorUI(page, phone, tutorName = '') {
 
         if (!addBtn) return null;
         const r = addBtn.getBoundingClientRect();
-        return { x: r.left + r.width / 2, y: r.top + r.height / 2, width: r.width, height: r.height };
+        return { x: r.left, y: r.top, width: r.width, height: r.height };
     });
 
     await new Promise(r => setTimeout(r, 3500));
