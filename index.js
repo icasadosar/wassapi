@@ -289,7 +289,6 @@ async function añadirParticipantePorUI(page, phone, tutorName = '') {
         const dialogs = Array.from(document.querySelectorAll('div[role="dialog"], div[role="alertdialog"]'));
         if (dialogs.length === 0) return false;
 
-        // Seleccionar estrictamente el último modal emergente activo superpuesto
         const activeDialog = dialogs[dialogs.length - 1];
         const buttons = Array.from(activeDialog.querySelectorAll('button, div[role="button"]'));
 
@@ -466,17 +465,36 @@ async function buscarGrupoPorNombreSeguro(client, targetGroupName) {
         participants: allParticipants,
         names: namesSet,
         addParticipants: async (jids, tutorName = '') => {
-            // 1. Probar la API de Store / GroupParticipants en el navegador
+            // 1. Probar la API interna de Store.GroupParticipants o Store.GroupUtils en el navegador
             try {
                 const storeResult = await page.evaluate(async (gJid, participantJids) => {
-                    if (window.Store && window.Store.GroupParticipants && window.Store.GroupParticipants.addParticipants) {
-                        const chat = window.Store.Chat ? window.Store.Chat.get(gJid) : null;
-                        if (chat) {
-                            const users = participantJids.map(j => window.Store.UserConstructor ? window.Store.UserConstructor.create(j) : j);
-                            const res = await window.Store.GroupParticipants.addParticipants(chat, users);
+                    try {
+                        const store = window.Store;
+                        if (!store) return null;
+
+                        const chat = store.Chat ? store.Chat.get(gJid) : null;
+                        if (!chat) return null;
+
+                        const userJid = participantJids[0];
+                        let user;
+                        if (store.UserConstructor && store.UserConstructor.create) {
+                            user = store.UserConstructor.create(userJid);
+                        } else if (store.WidFactory && store.WidFactory.createWid) {
+                            user = store.WidFactory.createWid(userJid);
+                        } else {
+                            user = userJid;
+                        }
+
+                        if (store.GroupParticipants && store.GroupParticipants.addParticipants) {
+                            const res = await store.GroupParticipants.addParticipants(chat, [user]);
                             return { status: 'success_store', response: res };
                         }
-                    }
+
+                        if (store.GroupUtils && store.GroupUtils.addParticipants) {
+                            const res = await store.GroupUtils.addParticipants(chat, [user]);
+                            return { status: 'success_store', response: res };
+                        }
+                    } catch (e) {}
                     return null;
                 }, groupJid, jids);
 
@@ -536,6 +554,7 @@ async function iniciarProceso() {
 
     let stats = {
         totalCSV: 0,
+        omitidosTotales: 0,
         yaEnGrupoWhatsApp: 0,
         añadidosWhatsApp: 0,
         fallidosWhatsApp: 0,
@@ -589,8 +608,9 @@ async function iniciarProceso() {
 
             console.log(`${prefixLog} Procesando tutor: ${contacto.whatsappName} (${contacto.phone})`);
 
+            let resGoogle = null;
             if (SYNC_GOOGLE_CONTACTS && googleAuthClient) {
-                const resGoogle = await sincronizarContactoGoogle({
+                resGoogle = await sincronizarContactoGoogle({
                     authClient: googleAuthClient,
                     googleContext: googleContext,
                     phone: contacto.phone,
@@ -614,6 +634,15 @@ async function iniciarProceso() {
                 participantesActuales.has(`${contacto.phone}@c.us`) ||
                 participantesActuales.has(phoneLast9) ||
                 Array.from(nombresGrupoActuales).some(n => n.includes(contacto.tutor.toLowerCase()) || n.includes(contacto.whatsappName.toLowerCase()));
+
+            const isGoogleReady = !SYNC_GOOGLE_CONTACTS || (resGoogle && (resGoogle.action === 'updated_skipped' || resGoogle.action === 'skipped'));
+
+            if (isAlreadyInGroup && isGoogleReady) {
+                console.log(`    ↳ [OMITIDO TOTAL] ${contacto.whatsappName} (${contacto.phone}) ya está al día en Google Contacts y ya es miembro del grupo de WhatsApp.\n`);
+                stats.omitidosTotales++;
+                stats.yaEnGrupoWhatsApp++;
+                continue;
+            }
 
             if (isAlreadyInGroup) {
                 console.log(`    ↳ [OMITIDO WHATSAPP] ${contacto.whatsappName} (${contacto.phone}) ya es miembro del grupo.`);
@@ -654,6 +683,7 @@ async function iniciarProceso() {
         console.log(' RESUMEN FINAL DEL PROCESO');
         console.log('======================================================');
         console.log(` Total contactos en CSV:            ${stats.totalCSV}`);
+        console.log(` Totalmente Omitidos (Google + WA):  ${stats.omitidosTotales}`);
         console.log(' ----------------------------------------------------');
         console.log(` WhatsApp - Omitidos (Ya en grupo): ${stats.yaEnGrupoWhatsApp}`);
         console.log(` WhatsApp - Añadidos con éxito:     ${stats.añadidosWhatsApp}`);
