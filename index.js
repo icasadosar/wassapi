@@ -280,16 +280,35 @@ async function añadirParticipantePorUI(page, phone, tutorName = '') {
         await page.keyboard.press('Enter');
     }
 
-    await new Promise(r => setTimeout(r, 2000));
+    await new Promise(r => setTimeout(r, 2500));
 
-    // 6. Confirmar en la ventana modal secundaria emergente ("Add member?")
+    // Diagnóstico de botones en el diálogo secundario de confirmación final
+    const finalDiag = await page.evaluate(() => {
+        const dialogs = Array.from(document.querySelectorAll('div[role="dialog"], div[role="alertdialog"]'));
+        const result = [];
+        dialogs.forEach(d => {
+            const buttons = Array.from(d.querySelectorAll('button, div[role="button"], span'));
+            buttons.forEach(b => {
+                const txt = (b.innerText || b.getAttribute('aria-label') || '').trim();
+                if (txt && txt.length < 40) {
+                    result.push({ text: txt, tag: b.tagName });
+                }
+            });
+        });
+        return result;
+    });
+
+    console.log('        [DIAGNÓSTICO POPUP FINAL CONFIRMACIÓN]', JSON.stringify(finalDiag));
+
+    // 6. Confirmar de forma estricta haciendo clic en el botón 'Add member' / 'Add' / 'Añadir' del popup final
     const finalAdded = await page.evaluate(() => {
-        const dialogs = Array.from(document.querySelectorAll('div[role="dialog"]'));
+        const dialogs = Array.from(document.querySelectorAll('div[role="dialog"], div[role="alertdialog"]'));
         for (const d of dialogs) {
             const buttons = Array.from(d.querySelectorAll('button, div[role="button"]'));
             const addBtn = buttons.find(b => {
-                const txt = (b.innerText || b.getAttribute('aria-label') || '').toLowerCase();
-                return (txt === 'add member' || txt === 'add participant' || txt === 'add' || txt === 'añadir') && !txt.includes('cancel');
+                const txt = (b.innerText || b.getAttribute('aria-label') || '').toLowerCase().trim();
+                const isAdd = txt === 'add member' || txt === 'add participant' || txt === 'add' || txt === 'añadir' || txt === 'añadir participante' || txt === 'agregar';
+                return isAdd && !txt.includes('cancel') && !txt.includes('cancelar');
             });
             if (addBtn) {
                 try { addBtn.click(); return true; } catch(e) {}
@@ -306,11 +325,13 @@ async function añadirParticipantePorUI(page, phone, tutorName = '') {
         await new Promise(r => setTimeout(r, 300));
     } catch (e) {}
 
-    if (finalAdded || confirmedCheck) {
+    if (finalAdded) {
+        console.log(`        ↳ [CONFIRMACIÓN COMPLETADA] Clic realizado en el botón final de añadir del popup.`);
         return { status: 'success_ui' };
+    } else {
+        console.warn(`        ↳ [FALLO CONFIRMACIÓN FINAL] El botón final del popup emergente no pudo ser activado.`);
+        return { status: 'final_popup_not_confirmed' };
     }
-
-    return { status: 'ui_confirmation_failed' };
 }
 
 /**
