@@ -8,7 +8,7 @@ const { getAuthenticatedClient, sincronizarContactoGoogle } = require('./googleC
 
 // Cargar variables de entorno con valores por defecto
 const GROUP_NAME = process.env.GROUP_NAME || 'Nombre De Tu Grupo';
-const CSV_PATH = path.resolve(process.env.CSV_PATH || './contactos.example.csv');
+const CSV_PATH = path.resolve(process.env.CSV_PATH || './cd_cigales_20260808_jugador.csv');
 const PHONE_COLUMN = process.env.PHONE_COLUMN || 'Teléfono tutor';
 const NAME_COLUMN = process.env.NAME_COLUMN || 'Nombre tutor';
 
@@ -137,6 +137,96 @@ async function limpiarPantallaWhatsApp(page) {
 }
 
 /**
+ * Añade un contacto al grupo abierto mediante la interfaz gráfica de WhatsApp Web
+ */
+async function añadirParticipantePorUI(page, phone) {
+    console.log(`        ↳ [UI WHATSAPP] Buscando botón 'Añadir participante' en pantalla...`);
+    
+    // 1. Abrir panel de información del grupo si no está abierto
+    await page.evaluate(() => {
+        const header = document.querySelector('header div[role="button"], header div[title], header span[title], header');
+        if (header) {
+            try { header.click(); } catch(e) {}
+        }
+    });
+    await new Promise(r => setTimeout(r, 1000));
+
+    // 2. Localizar y hacer clic en 'Añadir participante'
+    const addBtnClicked = await page.evaluate(() => {
+        const clickable = Array.from(document.querySelectorAll('div[role="button"], button, span, div'));
+        const target = clickable.find(el => {
+            const txt = (el.innerText || el.getAttribute('aria-label') || el.getAttribute('title') || '').toLowerCase();
+            return txt.includes('añadir participante') || txt.includes('add participant') || txt.includes('agregar participante');
+        });
+
+        if (target) {
+            try { target.click(); return true; } catch(e) {}
+        }
+        return false;
+    });
+
+    if (!addBtnClicked) {
+        console.warn(`        ↳ [UI WHATSAPP] No se localizó el botón 'Añadir participante' en la interfaz.`);
+        return { status: 'add_button_not_found' };
+    }
+
+    await new Promise(r => setTimeout(r, 1500));
+
+    // 3. Escribir el número de teléfono en el buscador flotante
+    const inputSelector = 'div[contenteditable="true"], input[type="text"], input[role="textbox"]';
+    try {
+        const modalInput = await page.$(inputSelector);
+        if (modalInput) {
+            await modalInput.click();
+            await page.keyboard.type(phone, { delay: 50 });
+            await new Promise(r => setTimeout(r, 1500));
+        }
+    } catch (e) {}
+
+    // 4. Seleccionar el contacto devuelto en la lista flotante
+    const contactSelected = await page.evaluate(() => {
+        const items = Array.from(document.querySelectorAll('div[role="listitem"], div[role="option"], span'));
+        for (const item of items) {
+            const txt = item.innerText || '';
+            if (txt.includes('Añadir') || txt.includes('Add') || txt.length > 3) {
+                try { item.click(); return true; } catch(e) {}
+            }
+        }
+        return false;
+    });
+
+    if (contactSelected) {
+        await new Promise(r => setTimeout(r, 1000));
+
+        // 5. Confirmar haciendo clic en el check verde
+        await page.evaluate(() => {
+            const confirmBtn = document.querySelector('span[data-icon="checkmark-medium"], span[data-icon="send"], div[aria-label*="Confirmar"], div[aria-label*="Check"], button');
+            if (confirmBtn) {
+                try { confirmBtn.click(); } catch(e) {}
+            }
+        });
+        await new Promise(r => setTimeout(r, 1500));
+
+        // 6. Confirmar en el popup final de añadir
+        await page.evaluate(() => {
+            const btns = Array.from(document.querySelectorAll('button, div[role="button"]'));
+            const finalAdd = btns.find(b => {
+                const txt = (b.innerText || '').toLowerCase();
+                return txt === 'añadir participante' || txt === 'add participant' || txt === 'añadir';
+            });
+            if (finalAdd) {
+                try { finalAdd.click(); } catch(e) {}
+            }
+        });
+        await new Promise(r => setTimeout(r, 1000));
+
+        return { status: 'success_ui' };
+    }
+
+    return { status: 'contact_not_found_ui' };
+}
+
+/**
  * Busca un grupo en WhatsApp Web e interactúa con él abriendo la conversación
  */
 async function buscarGrupoPorNombreSeguro(client, targetGroupName) {
@@ -190,15 +280,18 @@ async function buscarGrupoPorNombreSeguro(client, targetGroupName) {
     const screenPath = path.resolve('./whatsapp_screen.png');
     try { await page.screenshot({ path: screenPath }); } catch (e) {}
 
-    // Inspeccionar la presencia de objetos en window
-    const debugObjects = await page.evaluate(() => {
-        return {
-            hasWWebJS: typeof window.WWebJS !== 'undefined',
-            hasStore: typeof window.Store !== 'undefined',
-            windowKeys: Object.keys(window).filter(k => k.toLowerCase().includes('wweb') || k.toLowerCase().includes('store') || k.toLowerCase().includes('webpack'))
-        };
-    });
-    console.log('    [DIAGNÓSTICO WINDOW] Objetos detectados en navegador:', JSON.stringify(debugObjects));
+    // Intentar recuperar el objeto GroupChat directamente de la API de whatsapp-web.js
+    let nativeGroupChat = null;
+    try {
+        const chats = await client.getChats();
+        console.log(`    [DIAGNÓSTICO NATIVO] Total chats cargados en client.getChats(): ${chats.length}`);
+        nativeGroupChat = chats.find(c => c.isGroup && (c.name.trim().toLowerCase().includes(targetGroupName.trim().toLowerCase()) || targetGroupName.trim().toLowerCase().includes(c.name.trim().toLowerCase())));
+        if (nativeGroupChat) {
+            console.log(`    ↳ [ÉXITO NATIVO] Objeto GroupChat obtenido mediante whatsapp-web.js API (ID: ${nativeGroupChat.id._serialized})`);
+        }
+    } catch (e) {
+        console.warn('    ↳ Advertencia obteniendo chats nativos:', e.message);
+    }
 
     // Abrir la cabecera del grupo para mostrar la información del grupo y los participantes en pantalla
     try {
@@ -211,7 +304,7 @@ async function buscarGrupoPorNombreSeguro(client, targetGroupName) {
         await new Promise(r => setTimeout(r, 1500));
     } catch (e) {}
 
-    // Extraer teléfonos/contactos de participantes visibles en el DOM de la conversación abierta
+    // Extraer participantes visibles en el DOM
     const domParticipants = await page.evaluate(() => {
         const set = new Set();
         const nodes = document.querySelectorAll('span, div, p');
@@ -229,36 +322,37 @@ async function buscarGrupoPorNombreSeguro(client, targetGroupName) {
 
     console.log(`    ↳ Participantes detectados en la interfaz visual: ${domParticipants.length}`);
 
-    // Construir objeto de grupo funcional independiente de window.Store
+    // Combinar participantes nativos si están disponibles
+    let allParticipants = domParticipants.map(jid => ({ id: { _serialized: jid } }));
+    if (nativeGroupChat && nativeGroupChat.participants) {
+        const nativeP = nativeGroupChat.participants.map(p => ({ id: { _serialized: p.id._serialized || `${p.id.user}@c.us` } }));
+        const combinedSet = new Set([
+            ...domParticipants,
+            ...nativeP.map(p => p.id._serialized)
+        ]);
+        allParticipants = Array.from(combinedSet).map(jid => ({ id: { _serialized: jid } }));
+    }
+
     return {
         name: targetGroupName,
         isGroup: true,
-        id: { _serialized: `${targetGroupName}@g.us` },
-        participants: domParticipants.map(jid => ({ id: { _serialized: jid } })),
+        id: { _serialized: nativeGroupChat ? nativeGroupChat.id._serialized : `${targetGroupName}@g.us` },
+        participants: allParticipants,
         addParticipants: async (jids) => {
-            return await page.evaluate(async (participantJids) => {
-                // Si WWebJS o Store están disponibles, usarlos
-                if (window.WWebJS && window.WWebJS.group && window.WWebJS.group.addParticipants) {
-                    const active = window.Store && window.Store.Chat && window.Store.Chat.getActive ? window.Store.Chat.getActive() : null;
-                    if (active) {
-                        return await window.WWebJS.group.addParticipants(active.id._serialized || active.id, participantJids);
-                    }
+            // 1. Probar método nativo de whatsapp-web.js
+            if (nativeGroupChat && typeof nativeGroupChat.addParticipants === 'function') {
+                try {
+                    console.log(`        ↳ Intentando adición mediante API nativa whatsapp-web.js...`);
+                    const res = await nativeGroupChat.addParticipants(jids);
+                    return res;
+                } catch (ne) {
+                    console.warn(`        ↳ Fallo en API nativa, ejecutando automatización visual UI:`, ne.message);
                 }
+            }
 
-                // Fallback por interfaz visual: hacer clic en 'Añadir participante' / 'Add participant'
-                const buttons = Array.from(document.querySelectorAll('div[role="button"], button, span'));
-                const addBtn = buttons.find(b => {
-                    const txt = (b.innerText || b.getAttribute('aria-label') || '').toLowerCase();
-                    return txt.includes('add participant') || txt.includes('añadir participante') || txt.includes('agregar participante');
-                });
-
-                if (addBtn) {
-                    try { addBtn.click(); } catch(e) {}
-                    return { status: 'ui_add_initiated' };
-                }
-
-                return { status: 'manual_fallback_needed' };
-            }, jids);
+            // 2. Ejecutar automatización visual UI en Puppeteer
+            const phone = jids[0].replace(/\D/g, '');
+            return await añadirParticipantePorUI(page, phone);
         }
     };
 }
@@ -304,7 +398,6 @@ async function iniciarProceso() {
     };
 
     try {
-        // Inicializar cliente de Google Contacts si está activado
         let googleAuthClient = null;
         if (SYNC_GOOGLE_CONTACTS) {
             console.log('Inicializando autenticación con Google Contacts API...');
@@ -314,13 +407,11 @@ async function iniciarProceso() {
             console.log('Sincronización con Google Contacts DESACTIVADA (Usa SYNC_GOOGLE_CONTACTS=true o --sync-google-contacts para activarla).\n');
         }
 
-        // 1. Cargar contactos desde CSV
         console.log(`Cargando contactos desde CSV (${CSV_PATH})...`);
         const contactos = await cargarContactosDesdeCSV(CSV_PATH);
         stats.totalCSV = contactos.length;
         console.log(`Se encontraron ${contactos.length} contactos válidos en el CSV.\n`);
 
-        // 2. Buscar el grupo de WhatsApp de forma segura
         console.log(`Buscando grupo: "${GROUP_NAME}"...`);
         const grupo = await buscarGrupoPorNombreSeguro(client, GROUP_NAME);
 
@@ -332,13 +423,11 @@ async function iniciarProceso() {
 
         console.log(`Grupo encontrado: "${grupo.name}" (ID: ${grupo.id._serialized})`);
 
-        // 3. Obtener Set de participantes actuales en el grupo
         const participantesActuales = new Set(
             grupo.participants.map(p => p.id._serialized)
         );
         console.log(`Participantes detectados en el grupo: ${participantesActuales.size}\n`);
 
-        // 4. Procesar contactos uno a uno
         console.log('--- INICIANDO PROCESAMIENTO DE CONTACTOS ---\n');
 
         for (let i = 0; i < contactos.length; i++) {
@@ -347,7 +436,6 @@ async function iniciarProceso() {
 
             console.log(`${prefixLog} Procesando tutor: ${contacto.whatsappName} (${contacto.phone})`);
 
-            // 4a. Sincronizar opcionalmente en Google Contacts
             if (SYNC_GOOGLE_CONTACTS && googleAuthClient) {
                 const resGoogle = await sincronizarContactoGoogle({
                     authClient: googleAuthClient,
@@ -367,7 +455,6 @@ async function iniciarProceso() {
                 }
             }
 
-            // 4b. Comprobar si el contacto ya pertenece al grupo de WhatsApp
             if (participantesActuales.has(contacto.jid)) {
                 console.log(`    ↳ [OMITIDO WHATSAPP] ${contacto.whatsappName} ya es miembro del grupo.`);
                 stats.yaEnGrupoWhatsApp++;
@@ -389,7 +476,6 @@ async function iniciarProceso() {
                 }
             }
 
-            // Aplicar retardo aleatorio entre adiciones (salvo en la última vuelta)
             if (i < contactos.length - 1) {
                 const delaySec = Math.round((MIN_DELAY_MS + MAX_DELAY_MS) / 2000);
                 console.log(`    ... esperando ~${delaySec}s entre contactos ...\n`);
