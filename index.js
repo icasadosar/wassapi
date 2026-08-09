@@ -139,7 +139,7 @@ async function limpiarPantallaWhatsApp(page) {
 /**
  * Añade un contacto al grupo abierto mediante la interfaz gráfica de WhatsApp Web
  */
-async function añadirParticipantePorUI(page, phone) {
+async function añadirParticipantePorUI(page, phone, tutorName = '') {
     console.log(`        ↳ [UI WHATSAPP] Verificando panel de información del grupo activo...`);
 
     // 1. Verificar si el panel de info ya está abierto; si no, abrirlo haciendo clic en la cabecera
@@ -195,46 +195,61 @@ async function añadirParticipantePorUI(page, phone) {
 
     await new Promise(r => setTimeout(r, 2000));
 
-    // 3. Escribir los 9 últimos dígitos del teléfono en el buscador del cuadro modal emergente
+    // 3. Escribir términos de búsqueda en el cuadro modal emergente (9 dígitos -> internacional -> nombre del tutor)
     const modalInputHandle = await page.$('div[role="dialog"] div[contenteditable="true"], div[role="dialog"] input, div[contenteditable="true"]');
     if (!modalInputHandle) {
         console.warn(`        ↳ [UI WHATSAPP] No se abrió el cuadro modal emergente para buscar contactos.`);
         return { status: 'modal_not_opened' };
     }
 
-    const searchDigits = phone.length >= 9 ? phone.slice(-9) : phone;
-    await modalInputHandle.click();
+    const searchTerms = [
+        phone.length >= 9 ? phone.slice(-9) : phone,
+        `+${phone}`,
+        tutorName
+    ].filter(Boolean);
 
-    // Limpiar input modal previa
-    await page.keyboard.down('Meta');
-    await page.keyboard.press('A');
-    await page.keyboard.up('Meta');
-    await page.keyboard.press('Backspace');
-    await new Promise(r => setTimeout(r, 200));
+    let contactSelected = false;
 
-    await modalInputHandle.type(searchDigits, { delay: 70 });
-    await new Promise(r => setTimeout(r, 3000));
+    for (const term of searchTerms) {
+        await modalInputHandle.click();
 
-    // 4. Seleccionar el checkbox / elemento de usuario devuelto (ignorando el título 'Contacts')
-    const contactSelected = await page.evaluate(() => {
-        const dialog = document.querySelector('div[role="dialog"]');
-        if (!dialog) return false;
+        // Limpiar input modal previa
+        await page.keyboard.down('Meta');
+        await page.keyboard.press('A');
+        await page.keyboard.up('Meta');
+        await page.keyboard.press('Backspace');
+        await new Promise(r => setTimeout(r, 200));
 
-        const candidates = Array.from(dialog.querySelectorAll('div[role="checkbox"], div[role="listitem"], div[role="option"]'));
-        const match = candidates.find(el => {
-            const txt = (el.innerText || '').trim().toLowerCase();
-            return txt !== 'contacts' && txt !== 'contactos' && txt.length > 2;
+        await modalInputHandle.type(term, { delay: 60 });
+        await new Promise(r => setTimeout(r, 2500));
+
+        // 4. Seleccionar el checkbox del usuario devuelto (ignorando la cabecera 'Contacts')
+        contactSelected = await page.evaluate(() => {
+            const dialog = document.querySelector('div[role="dialog"]');
+            if (!dialog) return false;
+
+            const candidates = Array.from(dialog.querySelectorAll('div[role="checkbox"], div[role="listitem"], div[role="option"]'));
+            const match = candidates.find(el => {
+                const txt = (el.innerText || '').trim().toLowerCase();
+                return txt !== 'contacts' && txt !== 'contactos' && txt.length > 2;
+            });
+
+            if (match) {
+                try { match.click(); return true; } catch(e) {}
+            }
+            return false;
         });
 
-        if (match) {
-            try { match.click(); return true; } catch(e) {}
-        }
-        return false;
-    });
+        if (contactSelected) break;
+    }
 
     if (!contactSelected) {
-        console.warn(`        ↳ [UI WHATSAPP] El contacto (${searchDigits}) no apareció en los resultados del cuadro modal.`);
-        await page.keyboard.press('Escape');
+        console.warn(`        ↳ [UI WHATSAPP] El contacto (${phone}) no apareció en los resultados del cuadro modal.`);
+        try {
+            await page.keyboard.press('Escape');
+            await new Promise(r => setTimeout(r, 500));
+            await page.keyboard.press('Escape');
+        } catch(e) {}
         return { status: 'contact_not_found_in_modal' };
     }
 
@@ -284,6 +299,12 @@ async function añadirParticipantePorUI(page, phone) {
     });
 
     await new Promise(r => setTimeout(r, 2000));
+
+    // Limpieza final de modales tras completar el intento
+    try {
+        await page.keyboard.press('Escape');
+        await new Promise(r => setTimeout(r, 300));
+    } catch (e) {}
 
     if (finalAdded || confirmedCheck) {
         return { status: 'success_ui' };
@@ -435,7 +456,7 @@ async function buscarGrupoPorNombreSeguro(client, targetGroupName) {
         id: { _serialized: groupJid },
         participants: allParticipants,
         names: namesSet,
-        addParticipants: async (jids) => {
+        addParticipants: async (jids, tutorName = '') => {
             // 1. Probar la API de Store / GroupParticipants en el navegador
             try {
                 const storeResult = await page.evaluate(async (gJid, participantJids) => {
@@ -470,7 +491,7 @@ async function buscarGrupoPorNombreSeguro(client, targetGroupName) {
 
             // 3. Ejecutar automatización visual UI en Puppeteer
             const phone = jids[0].replace(/\D/g, '');
-            return await añadirParticipantePorUI(page, phone);
+            return await añadirParticipantePorUI(page, phone, tutorName);
         }
     };
 }
@@ -596,7 +617,7 @@ async function iniciarProceso() {
                     stats.añadidosWhatsApp++;
                 } else {
                     try {
-                        const result = await grupo.addParticipants([contacto.jid]);
+                        const result = await grupo.addParticipants([contacto.jid], contacto.whatsappName);
                         const isSuccess = result && (result.status === 'success_ui' || result.status === 'success_native' || result.status === 'success_store' || Array.isArray(result));
 
                         if (isSuccess) {
