@@ -225,8 +225,9 @@ async function añadirParticipantePorUI(page, phone, tutorName = '') {
 
         // 4. Seleccionar el checkbox del usuario devuelto (ignorando la cabecera 'Contacts')
         contactSelected = await page.evaluate(() => {
-            const dialog = document.querySelector('div[role="dialog"]');
-            if (!dialog) return false;
+            const dialogs = Array.from(document.querySelectorAll('div[role="dialog"]'));
+            if (dialogs.length === 0) return false;
+            const dialog = dialogs[dialogs.length - 1];
 
             const candidates = Array.from(dialog.querySelectorAll('div[role="checkbox"], div[role="listitem"], div[role="option"]'));
             const match = candidates.find(el => {
@@ -255,10 +256,11 @@ async function añadirParticipantePorUI(page, phone, tutorName = '') {
 
     await new Promise(r => setTimeout(r, 1500));
 
-    // 5. Hacer clic en el botón flotante verde de confirmación (checkmark/send) en la esquina inferior derecha del modal
+    // 5. Hacer clic en el botón flotante verde de confirmación (checkmark/send) en la esquina inferior derecha del modal activo
     const confirmedCheck = await page.evaluate(() => {
-        const dialog = document.querySelector('div[role="dialog"]');
-        if (!dialog) return false;
+        const dialogs = Array.from(document.querySelectorAll('div[role="dialog"]'));
+        if (dialogs.length === 0) return false;
+        const dialog = dialogs[dialogs.length - 1];
 
         const confirmBtn = Array.from(dialog.querySelectorAll('div[role="button"], button, span[data-icon]')).find(el => {
             const icon = el.getAttribute('data-icon') || (el.querySelector('span[data-icon]') ? el.querySelector('span[data-icon]').getAttribute('data-icon') : '');
@@ -282,42 +284,28 @@ async function añadirParticipantePorUI(page, phone, tutorName = '') {
 
     await new Promise(r => setTimeout(r, 2500));
 
-    // Diagnóstico de botones en el diálogo secundario de confirmación final
-    const finalDiag = await page.evaluate(() => {
-        const dialogs = Array.from(document.querySelectorAll('div[role="dialog"], div[role="alertdialog"]'));
-        const result = [];
-        dialogs.forEach(d => {
-            const buttons = Array.from(d.querySelectorAll('button, div[role="button"], span'));
-            buttons.forEach(b => {
-                const txt = (b.innerText || b.getAttribute('aria-label') || '').trim();
-                if (txt && txt.length < 40) {
-                    result.push({ text: txt, tag: b.tagName });
-                }
-            });
-        });
-        return result;
-    });
-
-    console.log('        [DIAGNÓSTICO POPUP FINAL CONFIRMACIÓN]', JSON.stringify(finalDiag));
-
-    // 6. Confirmar de forma estricta haciendo clic en el botón 'Add member' / 'Add' / 'Añadir' del popup final
+    // 6. Confirmar en la ventana emergente modal superpuesta final ("Add member?")
     const finalAdded = await page.evaluate(() => {
         const dialogs = Array.from(document.querySelectorAll('div[role="dialog"], div[role="alertdialog"]'));
-        for (const d of dialogs) {
-            const buttons = Array.from(d.querySelectorAll('button, div[role="button"]'));
-            const addBtn = buttons.find(b => {
-                const txt = (b.innerText || b.getAttribute('aria-label') || '').toLowerCase().trim();
-                const isAdd = txt === 'add member' || txt === 'add participant' || txt === 'add' || txt === 'añadir' || txt === 'añadir participante' || txt === 'agregar';
-                return isAdd && !txt.includes('cancel') && !txt.includes('cancelar');
-            });
-            if (addBtn) {
-                try { addBtn.click(); return true; } catch(e) {}
-            }
+        if (dialogs.length === 0) return false;
+
+        // Seleccionar estrictamente el último modal emergente activo superpuesto
+        const activeDialog = dialogs[dialogs.length - 1];
+        const buttons = Array.from(activeDialog.querySelectorAll('button, div[role="button"]'));
+
+        const addBtn = buttons.find(b => {
+            const txt = (b.innerText || b.getAttribute('aria-label') || '').toLowerCase().trim();
+            const isCancel = txt.includes('cancel') || txt.includes('cancelar') || txt.includes('close') || txt.includes('cerrar');
+            return !isCancel && (txt.includes('add') || txt.includes('añadir') || txt.includes('agregar'));
+        }) || (buttons.length >= 2 ? buttons[buttons.length - 1] : null);
+
+        if (addBtn) {
+            try { addBtn.click(); return true; } catch(e) {}
         }
         return false;
     });
 
-    await new Promise(r => setTimeout(r, 2000));
+    await new Promise(r => setTimeout(r, 3000));
 
     // Limpieza final de modales tras completar el intento
     try {
@@ -326,10 +314,10 @@ async function añadirParticipantePorUI(page, phone, tutorName = '') {
     } catch (e) {}
 
     if (finalAdded) {
-        console.log(`        ↳ [CONFIRMACIÓN COMPLETADA] Clic realizado en el botón final de añadir del popup.`);
+        console.log(`        ↳ [CONFIRMACIÓN COMPLETADA] Clic realizado en el botón final de añadir del diálogo flotante.`);
         return { status: 'success_ui' };
     } else {
-        console.warn(`        ↳ [FALLO CONFIRMACIÓN FINAL] El botón final del popup emergente no pudo ser activado.`);
+        console.warn(`        ↳ [FALLO CONFIRMACIÓN FINAL] No se localizó el botón final del diálogo emergente.`);
         return { status: 'final_popup_not_confirmed' };
     }
 }
