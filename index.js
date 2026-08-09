@@ -4,7 +4,7 @@ const path = require('path');
 const csv = require('csv-parser');
 const { Client, LocalAuth } = require('whatsapp-web.js');
 const qrcode = require('qrcode-terminal');
-const { getAuthenticatedClient, sincronizarContactoGoogle } = require('./googleContacts');
+const { getAuthenticatedClient, cargarMapaContactosGoogle, sincronizarContactoGoogle } = require('./googleContacts');
 
 // Cargar variables de entorno con valores por defecto
 const GROUP_NAME = process.env.GROUP_NAME || 'Nombre De Tu Grupo';
@@ -297,7 +297,7 @@ async function buscarGrupoPorNombreSeguro(client, targetGroupName) {
     const screenPath = path.resolve('./whatsapp_screen.png');
     try { await page.screenshot({ path: screenPath }); } catch (e) {}
 
-    // Intentar recuperar el objeto GroupChat directamente de la API de whatsapp-web.js
+    // Intentar recuperar el objeto GroupChat directamente de la API de whatsapp-web.js y actualizar sus participantes
     let nativeGroupChat = null;
     try {
         const chats = await client.getChats();
@@ -305,6 +305,12 @@ async function buscarGrupoPorNombreSeguro(client, targetGroupName) {
         nativeGroupChat = chats.find(c => c.isGroup && (c.name.trim().toLowerCase().includes(targetGroupName.trim().toLowerCase()) || targetGroupName.trim().toLowerCase().includes(c.name.trim().toLowerCase())));
         if (nativeGroupChat) {
             console.log(`    ↳ [ÉXITO NATIVO] Objeto GroupChat obtenido mediante whatsapp-web.js API (ID: ${nativeGroupChat.id._serialized})`);
+            try {
+                if (typeof nativeGroupChat.fetchGroupMetadata === 'function') {
+                    console.log(`    ↳ [NATIVO] Actualizando metadatos del grupo desde WhatsApp API...`);
+                    await nativeGroupChat.fetchGroupMetadata();
+                }
+            } catch (fe) {}
         }
     } catch (e) {
         console.warn('    ↳ Advertencia obteniendo chats nativos:', e.message);
@@ -418,10 +424,13 @@ async function iniciarProceso() {
 
     try {
         let googleAuthClient = null;
+        let googleContext = null;
         if (SYNC_GOOGLE_CONTACTS) {
             console.log('Inicializando autenticación con Google Contacts API...');
             googleAuthClient = await getAuthenticatedClient(GOOGLE_CREDENTIALS_PATH, GOOGLE_TOKEN_PATH);
-            console.log('Autenticación con Google Contacts realizada con éxito.\n');
+            console.log('Autenticación con Google Contacts realizada con éxito.');
+            googleContext = await cargarMapaContactosGoogle(googleAuthClient);
+            console.log('');
         } else {
             console.log('Sincronización con Google Contacts DESACTIVADA (Usa SYNC_GOOGLE_CONTACTS=true o --sync-google-contacts para activarla).\n');
         }
@@ -458,6 +467,7 @@ async function iniciarProceso() {
             if (SYNC_GOOGLE_CONTACTS && googleAuthClient) {
                 const resGoogle = await sincronizarContactoGoogle({
                     authClient: googleAuthClient,
+                    googleContext: googleContext,
                     phone: contacto.phone,
                     formattedName: contacto.googleName,
                     isDryRun: IS_DRY_RUN

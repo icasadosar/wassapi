@@ -151,19 +151,62 @@ function soloDigitos(phone) {
 }
 
 /**
+ * Carga todos los contactos de la cuenta de Google en memoria para búsquedas instantáneas e infalibles
+ */
+async function cargarMapaContactosGoogle(authClient) {
+    const service = google.people({ version: 'v1', auth: authClient });
+    const phoneMap = new Map();
+    let pageToken = undefined;
+
+    try {
+        do {
+            const res = await service.people.connections.list({
+                resourceName: 'people/me',
+                pageSize: 1000,
+                personFields: 'names,phoneNumbers',
+                pageToken: pageToken
+            });
+
+            const connections = res.data.connections || [];
+            for (const person of connections) {
+                const phoneNumbers = person.phoneNumbers || [];
+                phoneNumbers.forEach(p => {
+                    const digits = soloDigitos(p.value);
+                    if (digits) {
+                        phoneMap.set(digits, person);
+                        if (digits.length >= 9) {
+                            phoneMap.set(digits.slice(-9), person);
+                        }
+                    }
+                });
+            }
+            pageToken = res.data.nextPageToken;
+        } while (pageToken);
+
+        console.log(`    ↳ [GOOGLE CONTACTS] ${phoneMap.size} teléfonos cargados desde tu agenda de Google.`);
+    } catch (e) {
+        console.warn(`    ↳ [ADVERTENCIA GOOGLE] No se pudo precargar la lista de conexiones:`, e.message);
+    }
+
+    return { service, phoneMap };
+}
+
+/**
  * Sincroniza un contacto en Google Contacts:
- * 1. Busca si existe un contacto con el mismo número de teléfono.
+ * 1. Comprueba en el mapa en memoria si el contacto existe por número de teléfono.
  * 2. Si existe -> actualiza su nombre al formato `Nombre tutor - Nombre Apellidos (Equipos)`.
  * 3. Si no existe -> crea un nuevo contacto con dicho nombre y teléfono.
  */
 async function sincronizarContactoGoogle({
     authClient,
+    googleContext,
     phone,
     formattedName,
     isDryRun = false
 }) {
-    const service = google.people({ version: 'v1', auth: authClient });
     const targetDigits = soloDigitos(phone);
+    const service = (googleContext && googleContext.service) ? googleContext.service : google.people({ version: 'v1', auth: authClient });
+    const phoneMap = (googleContext && googleContext.phoneMap) ? googleContext.phoneMap : null;
 
     if (!targetDigits) {
         console.warn(`    ↳ [OMITIDO GOOGLE] Teléfono no válido para sincronización:`, phone);
@@ -171,25 +214,33 @@ async function sincronizarContactoGoogle({
     }
 
     try {
-        const searchRes = await service.people.searchContacts({
-            query: phone,
-            readMask: 'names,phoneNumbers',
-        });
-
-        const matches = searchRes.data.results || [];
         let existingContact = null;
 
-        for (const match of matches) {
-            const person = match.person;
-            const phoneNumbers = person.phoneNumbers || [];
-            const hasPhoneMatch = phoneNumbers.some(p => {
-                const digits = soloDigitos(p.value);
-                return digits.endsWith(targetDigits) || targetDigits.endsWith(digits);
+        // 1. Buscar primero en el mapa precargado en memoria (100% exacto y rápido)
+        if (phoneMap) {
+            existingContact = phoneMap.get(targetDigits) || (targetDigits.length >= 9 ? phoneMap.get(targetDigits.slice(-9)) : null);
+        }
+
+        // 2. Fallback a la API de búsqueda si no estaba en el mapa
+        if (!existingContact) {
+            const searchRes = await service.people.searchContacts({
+                query: phone,
+                readMask: 'names,phoneNumbers',
             });
 
-            if (hasPhoneMatch) {
-                existingContact = person;
-                break;
+            const matches = searchRes.data.results || [];
+            for (const match of matches) {
+                const person = match.person;
+                const phoneNumbers = person.phoneNumbers || [];
+                const hasPhoneMatch = phoneNumbers.some(p => {
+                    const digits = soloDigitos(p.value);
+                    return digits.endsWith(targetDigits) || targetDigits.endsWith(digits);
+                });
+
+                if (hasPhoneMatch) {
+                    existingContact = person;
+                    break;
+                }
             }
         }
 
@@ -202,7 +253,7 @@ async function sincronizarContactoGoogle({
                 return { action: 'updated_skipped', resourceName: existingContact.resourceName };
             }
 
-            console.log(`    ↳ [MODIFICANDO GOOGLE] Contacto existente (${currentName}). Cambiando nombre a: "${formattedName}"...`);
+            console.log(`    ↳ [MODIFICANDO GOOGLE] Contacto existente (${currentName || phone}). Cambiando nombre a: "${formattedName}"...`);
 
             if (isDryRun) {
                 console.log(`        ↳ [SIMULACIÓN GOOGLE] Se actualizaría el contacto a "${formattedName}".`);
@@ -259,5 +310,6 @@ async function sincronizarContactoGoogle({
 
 module.exports = {
     getAuthenticatedClient,
+    cargarMapaContactosGoogle,
     sincronizarContactoGoogle
 };
