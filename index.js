@@ -380,7 +380,7 @@ async function añadirParticipantePorUI(page, phone, contactoOrName = '') {
 
         console.log(`        [DIAGNÓSTICO BUSCADOR "${term}"]`, JSON.stringify(searchDiag));
 
-        // 4. Seleccionar el checkbox/item del usuario devuelto mediante clic de ratón nativo con coincidencia estricta
+        // 4. Seleccionar el checkbox/item del usuario devuelto mediante clic de ratón nativo con coincidencia estricta en el checkbox izquierdo
         contactSelected = await hacerClicFisicoCDP(page, () => {
             const dialogs = Array.from(document.querySelectorAll('div[role="dialog"]'));
             if (dialogs.length === 0) return null;
@@ -412,8 +412,16 @@ async function añadirParticipantePorUI(page, phone, contactoOrName = '') {
             });
 
             if (!match) return null;
+
+            // Intentar marcar la casilla de verificación mediante el evento de clic del DOM primero
+            try {
+                const cb = match.querySelector('input[type="checkbox"], div[role="checkbox"]') || match;
+                cb.click();
+            } catch(e) {}
+
             const r = match.getBoundingClientRect();
-            return { x: r.left, y: r.top, width: r.width, height: r.height };
+            // Retornar coordenadas concentradas en la casilla de verificación (checkbox) a la izquierda de la fila (x = left + 30)
+            return { x: r.left + 20, y: r.top, width: 20, height: r.height };
         });
 
         if (contactSelected) break;
