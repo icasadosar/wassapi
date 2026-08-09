@@ -763,7 +763,15 @@ async function iniciarProceso() {
             const isAlreadyInGroup = participantesActuales.has(contacto.jid) ||
                 participantesActuales.has(`${contacto.phone}@c.us`) ||
                 participantesActuales.has(phoneLast9) ||
-                Array.from(nombresGrupoActuales).some(n => n.includes(contacto.tutor.toLowerCase()) || n.includes(contacto.whatsappName.toLowerCase()));
+                Array.from(nombresGrupoActuales).some(n => {
+                    const cleanN = n.trim().toLowerCase();
+                    const tutorN = contacto.tutor.trim().toLowerCase();
+                    const googleN = (contacto.googleName || '').trim().toLowerCase();
+                    if (cleanN === tutorN) return true;
+                    if (googleN && cleanN === googleN) return true;
+                    if (contacto.player && cleanN.includes(tutorN) && cleanN.includes(contacto.player.toLowerCase())) return true;
+                    return false;
+                });
 
             const isGoogleReady = !SYNC_GOOGLE_CONTACTS || (resGoogle && (resGoogle.action === 'updated_skipped' || resGoogle.action === 'skipped' || resGoogle.action === 'created'));
 
