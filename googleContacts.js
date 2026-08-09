@@ -151,12 +151,21 @@ function soloDigitos(phone) {
 }
 
 /**
- * Carga todos los contactos de la cuenta de Google en memoria para búsquedas instantáneas e infalibles
+ * Obtiene los últimos 9 dígitos de un número de teléfono para coincidencias flexibles
+ */
+function ultimos9Digitos(phone) {
+    const digits = soloDigitos(phone);
+    return digits.length >= 9 ? digits.slice(-9) : digits;
+}
+
+/**
+ * Carga todos los contactos de la cuenta de Google en memoria e indexa por dígitos completos y últimos 9 dígitos
  */
 async function cargarMapaContactosGoogle(authClient) {
     const service = google.people({ version: 'v1', auth: authClient });
     const phoneMap = new Map();
     let pageToken = undefined;
+    let totalContactos = 0;
 
     try {
         do {
@@ -168,22 +177,25 @@ async function cargarMapaContactosGoogle(authClient) {
             });
 
             const connections = res.data.connections || [];
+            totalContactos += connections.length;
+
             for (const person of connections) {
                 const phoneNumbers = person.phoneNumbers || [];
                 phoneNumbers.forEach(p => {
                     const digits = soloDigitos(p.value);
+                    const last9 = ultimos9Digitos(p.value);
                     if (digits) {
                         phoneMap.set(digits, person);
-                        if (digits.length >= 9) {
-                            phoneMap.set(digits.slice(-9), person);
-                        }
+                    }
+                    if (last9 && last9.length === 9) {
+                        phoneMap.set(last9, person);
                     }
                 });
             }
             pageToken = res.data.nextPageToken;
         } while (pageToken);
 
-        console.log(`    ↳ [GOOGLE CONTACTS] ${phoneMap.size} teléfonos cargados desde tu agenda de Google.`);
+        console.log(`    ↳ [GOOGLE CONTACTS] ${totalContactos} contactos y ${phoneMap.size} índices de teléfono cargados en memoria.`);
     } catch (e) {
         console.warn(`    ↳ [ADVERTENCIA GOOGLE] No se pudo precargar la lista de conexiones:`, e.message);
     }
@@ -193,7 +205,7 @@ async function cargarMapaContactosGoogle(authClient) {
 
 /**
  * Sincroniza un contacto en Google Contacts:
- * 1. Comprueba en el mapa en memoria si el contacto existe por número de teléfono.
+ * 1. Comprueba en el mapa en memoria por dígitos completos y por los últimos 9 dígitos.
  * 2. Si existe -> actualiza su nombre al formato `Nombre tutor - Nombre Apellidos (Equipos)`.
  * 3. Si no existe -> crea un nuevo contacto con dicho nombre y teléfono.
  */
@@ -205,6 +217,7 @@ async function sincronizarContactoGoogle({
     isDryRun = false
 }) {
     const targetDigits = soloDigitos(phone);
+    const targetLast9 = ultimos9Digitos(phone);
     const service = (googleContext && googleContext.service) ? googleContext.service : google.people({ version: 'v1', auth: authClient });
     const phoneMap = (googleContext && googleContext.phoneMap) ? googleContext.phoneMap : null;
 
@@ -216,15 +229,16 @@ async function sincronizarContactoGoogle({
     try {
         let existingContact = null;
 
-        // 1. Buscar primero en el mapa precargado en memoria (100% exacto y rápido)
+        // 1. Coincidencia por teléfono exacto o por los últimos 9 dígitos en el mapa en memoria
         if (phoneMap) {
-            existingContact = phoneMap.get(targetDigits) || (targetDigits.length >= 9 ? phoneMap.get(targetDigits.slice(-9)) : null);
+            existingContact = phoneMap.get(targetDigits) || (targetLast9 ? phoneMap.get(targetLast9) : null);
         }
 
-        // 2. Fallback a la API de búsqueda si no estaba en el mapa
+        // 2. Fallback a la API de búsqueda usando los últimos 9 dígitos
         if (!existingContact) {
+            const querySearch = targetLast9.length === 9 ? targetLast9 : phone;
             const searchRes = await service.people.searchContacts({
-                query: phone,
+                query: querySearch,
                 readMask: 'names,phoneNumbers',
             });
 
@@ -234,7 +248,8 @@ async function sincronizarContactoGoogle({
                 const phoneNumbers = person.phoneNumbers || [];
                 const hasPhoneMatch = phoneNumbers.some(p => {
                     const digits = soloDigitos(p.value);
-                    return digits.endsWith(targetDigits) || targetDigits.endsWith(digits);
+                    const pLast9 = ultimos9Digitos(p.value);
+                    return (digits && digits === targetDigits) || (pLast9 && pLast9 === targetLast9);
                 });
 
                 if (hasPhoneMatch) {
