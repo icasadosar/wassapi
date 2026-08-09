@@ -195,7 +195,7 @@ async function añadirParticipantePorUI(page, phone) {
 
     await new Promise(r => setTimeout(r, 2000));
 
-    // 3. Escribir los últimos 9 dígitos del teléfono en el buscador del cuadro modal emergente
+    // 3. Escribir los 9 últimos dígitos del teléfono en el buscador del cuadro modal emergente
     const modalInputHandle = await page.$('div[role="dialog"] div[contenteditable="true"], div[role="dialog"] input, div[contenteditable="true"]');
     if (!modalInputHandle) {
         console.warn(`        ↳ [UI WHATSAPP] No se abrió el cuadro modal emergente para buscar contactos.`);
@@ -204,29 +204,59 @@ async function añadirParticipantePorUI(page, phone) {
 
     const searchDigits = phone.length >= 9 ? phone.slice(-9) : phone;
     await modalInputHandle.click();
-    await page.keyboard.type(searchDigits, { delay: 70 });
-    await new Promise(r => setTimeout(r, 2500));
 
-    // 4. Seleccionar el primer resultado retornado en el diálogo emergente
-    const contactSelected = await page.evaluate((targetPhone) => {
+    // Limpiar input modal previa
+    await page.keyboard.down('Meta');
+    await page.keyboard.press('A');
+    await page.keyboard.up('Meta');
+    await page.keyboard.press('Backspace');
+    await new Promise(r => setTimeout(r, 200));
+
+    await modalInputHandle.type(searchDigits, { delay: 70 });
+    await new Promise(r => setTimeout(r, 3000));
+
+    // Diagnóstico de elementos en el modal tras la búsqueda
+    const modalDiag = await page.evaluate(() => {
+        const dialog = document.querySelector('div[role="dialog"]');
+        if (!dialog) return [];
+        const items = Array.from(dialog.querySelectorAll('div[role="listitem"], div[role="option"], div[tabindex]'));
+        return items.map(el => ({
+            text: (el.innerText || '').trim(),
+            aria: el.getAttribute('aria-label') || '',
+            role: el.getAttribute('role') || '',
+            height: el.getBoundingClientRect().height
+        })).filter(i => i.text && i.height > 20);
+    });
+
+    console.log('        [DIAGNÓSTICO RESULTADOS MODAL]', JSON.stringify(modalDiag.slice(0, 10)));
+
+    // 4. Seleccionar de forma estricta el primer item de tipo listitem / option en los resultados del modal
+    const contactSelected = await page.evaluate(() => {
         const dialog = document.querySelector('div[role="dialog"]');
         if (!dialog) return false;
 
-        const items = Array.from(dialog.querySelectorAll('div[role="listitem"], div[role="option"], div[tabindex="-1"], div[role="button"]'));
-        const last9 = targetPhone.length >= 9 ? targetPhone.slice(-9) : targetPhone;
+        const listItems = Array.from(dialog.querySelectorAll('div[role="listitem"], div[role="option"]'));
+        for (const item of listItems) {
+            const isInput = item.querySelector('input') || item.getAttribute('role') === 'textbox';
+            const txt = (item.innerText || '').toLowerCase();
 
-        const match = items.find(el => {
-            const isInput = el.querySelector('input') || el.getAttribute('role') === 'textbox';
-            const rect = el.getBoundingClientRect();
-            const txt = el.innerText || '';
-            return !isInput && rect.height > 25 && (txt.includes(last9) || txt.length > 2);
-        });
-
-        if (match) {
-            try { match.click(); return true; } catch(e) {}
+            if (!isInput && !txt.includes('cancel') && !txt.includes('add member') && !txt.includes('añadir participante')) {
+                try { item.click(); return true; } catch(e) {}
+            }
         }
+
+        // Fallback: buscar div cliqueable con altura superior a 40px en la lista
+        const candidates = Array.from(dialog.querySelectorAll('div[tabindex="-1"], div[role="button"]'));
+        for (const cand of candidates) {
+            const rect = cand.getBoundingClientRect();
+            const txt = (cand.innerText || '').toLowerCase();
+            if (rect.height > 35 && rect.height < 100 && !txt.includes('cancel') && !txt.includes('add member') && !txt.includes('search')) {
+                try { cand.click(); return true; } catch(e) {}
+            }
+        }
+
         return false;
-    }, phone);
+    });
 
     if (!contactSelected) {
         console.warn(`        ↳ [UI WHATSAPP] El contacto (${searchDigits}) no apareció en los resultados del cuadro modal.`);
@@ -356,30 +386,20 @@ async function buscarGrupoPorNombreSeguro(client, targetGroupName) {
         await new Promise(r => setTimeout(r, 2000));
     } catch (e) {}
 
-    // Extraer participantes realizando desplazamientos en el panel de info del grupo
-    const domParticipants = await page.evaluate(async () => {
-        const set = new Set();
+    // Extraer tanto números como nombres de la lista de participantes en el DOM del panel derecho
+    const { domParticipants, domNames } = await page.evaluate(async () => {
+        const setPhone = new Set();
+        const setName = new Set();
         
-        // Localizar panel de info del grupo a la derecha
         const rightPane = Array.from(document.querySelectorAll('div')).find(d => {
             const rect = d.getBoundingClientRect();
             return rect.left > 450 && rect.width > 250 && rect.height > 400;
         });
 
         if (rightPane) {
-            // Si existe botón de "Ver todos" / "View all", hacer clic
-            const viewAllBtn = Array.from(rightPane.querySelectorAll('div[role="button"], button, span')).find(el => {
-                const txt = (el.innerText || '').toLowerCase();
-                return txt.includes('view all') || txt.includes('ver todos') || txt.includes('more members');
-            });
-            if (viewAllBtn) {
-                try { viewAllBtn.click(); } catch(e) {}
-                await new Promise(r => setTimeout(r, 1000));
-            }
-
-            // Scroll progresivo para cargar miembros del DOM
-            for (let s = 0; s < 8; s++) {
-                rightPane.scrollTop += 500;
+            // Hacer scroll progresivo hacia abajo para renderizar todos los miembros
+            for (let s = 0; s < 12; s++) {
+                rightPane.scrollTop += 400;
                 await new Promise(r => setTimeout(r, 150));
             }
         }
@@ -387,36 +407,43 @@ async function buscarGrupoPorNombreSeguro(client, targetGroupName) {
         const nodes = Array.from(document.querySelectorAll('span, div, p'));
         nodes.forEach(n => {
             const txt = n.innerText ? n.innerText.trim() : '';
-            if (txt.match(/^\+?\d[\d\s-]{8,}\d$/)) {
-                const clean = txt.replace(/\D/g, '');
-                if (clean.length >= 9) {
-                    set.add(`${clean}@c.us`);
+            if (txt) {
+                if (txt.match(/^\+?\d[\d\s-]{8,}\d$/)) {
+                    const clean = txt.replace(/\D/g, '');
+                    if (clean.length >= 9) {
+                        setPhone.add(`${clean}@c.us`);
+                        setPhone.add(clean.slice(-9));
+                    }
+                } else if (txt.length >= 3 && txt.length < 80) {
+                    setName.add(txt.toLowerCase());
                 }
             }
         });
-        return Array.from(set);
+        return { domParticipants: Array.from(setPhone), domNames: Array.from(setName) };
     });
 
-    console.log(`    ↳ Participantes detectados en la interfaz visual del panel derecho: ${domParticipants.length}`);
+    console.log(`    ↳ Participantes detectados en panel derecho: ${domParticipants.length} teléfonos, ${domNames.length} nombres de contacto.`);
 
     // Combinar participantes nativos si están disponibles
-    let allParticipants = domParticipants.map(jid => ({ id: { _serialized: jid } }));
+    let allParticipants = domParticipants.map(jid => ({ id: { _serialized: jid.includes('@') ? jid : `${jid}@c.us` } }));
     if (nativeGroupChat && nativeGroupChat.participants) {
         const nativeP = nativeGroupChat.participants.map(p => ({ id: { _serialized: p.id._serialized || `${p.id.user}@c.us` } }));
         const combinedSet = new Set([
             ...domParticipants,
             ...nativeP.map(p => p.id._serialized)
         ]);
-        allParticipants = Array.from(combinedSet).map(jid => ({ id: { _serialized: jid } }));
+        allParticipants = Array.from(combinedSet).map(jid => ({ id: { _serialized: jid.includes('@') ? jid : `${jid}@c.us` } }));
     }
 
     const groupJid = nativeGroupChat ? nativeGroupChat.id._serialized : `${targetGroupName}@g.us`;
+    const namesSet = new Set(domNames);
 
     return {
         name: targetGroupName,
         isGroup: true,
         id: { _serialized: groupJid },
         participants: allParticipants,
+        names: namesSet,
         addParticipants: async (jids) => {
             // 1. Probar la API de Store / GroupParticipants en el navegador
             try {
@@ -529,7 +556,9 @@ async function iniciarProceso() {
         const participantesActuales = new Set(
             grupo.participants.map(p => p.id._serialized)
         );
-        console.log(`Participantes detectados en el grupo: ${participantesActuales.size}\n`);
+        const nombresGrupoActuales = grupo.names || new Set();
+
+        console.log(`Participantes detectados en el grupo: ${participantesActuales.size} por teléfono / JID y ${nombresGrupoActuales.size} nombres.\n`);
 
         console.log('--- INICIANDO PROCESAMIENTO DE CONTACTOS ---\n');
 
@@ -559,8 +588,14 @@ async function iniciarProceso() {
                 }
             }
 
-            if (participantesActuales.has(contacto.jid)) {
-                console.log(`    ↳ [OMITIDO WHATSAPP] ${contacto.whatsappName} ya es miembro del grupo.`);
+            const phoneLast9 = contacto.phone.length >= 9 ? contacto.phone.slice(-9) : contacto.phone;
+            const isAlreadyInGroup = participantesActuales.has(contacto.jid) ||
+                participantesActuales.has(`${contacto.phone}@c.us`) ||
+                participantesActuales.has(phoneLast9) ||
+                Array.from(nombresGrupoActuales).some(n => n.includes(contacto.tutor.toLowerCase()) || n.includes(contacto.whatsappName.toLowerCase()));
+
+            if (isAlreadyInGroup) {
+                console.log(`    ↳ [OMITIDO WHATSAPP] ${contacto.whatsappName} (${contacto.phone}) ya es miembro del grupo.`);
                 stats.yaEnGrupoWhatsApp++;
             } else {
                 console.log(`    ↳ [AÑADIENDO WHATSAPP] Añadiendo a ${contacto.whatsappName} (${contacto.phone}) al grupo...`);
