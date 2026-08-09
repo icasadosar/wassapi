@@ -266,40 +266,46 @@ async function añadirParticipantePorUI(page, phone, tutorName = '') {
     let addBtnClicked = false;
     for (let attempt = 0; attempt < 5; attempt++) {
         addBtnClicked = await hacerClicFisicoCDP(page, () => {
-            const elements = Array.from(document.querySelectorAll('div[role="button"], button, span, div'));
+            const elements = Array.from(document.querySelectorAll('div[role="button"], button, div[tabindex]'));
             const target = elements.find(el => {
                 const rect = el.getBoundingClientRect();
-                if (rect.left < 450) return false;
+                if (rect.left < 450 || rect.width < 10 || rect.height < 10) return false;
 
                 const txt = (el.innerText || el.getAttribute('aria-label') || el.getAttribute('title') || '').toLowerCase();
-                const icon = el.getAttribute('data-icon') || (el.querySelector('span[data-icon]') ? el.querySelector('span[data-icon]').getAttribute('data-icon') : '');
+                const iconEl = el.querySelector('span[data-icon]');
+                const icon = iconEl ? iconEl.getAttribute('data-icon') : (el.getAttribute('data-icon') || '');
 
                 const isAddText = txt.includes('add member') || txt.includes('add participant') || txt.includes('add members') || txt.includes('añadir participante') || txt.includes('añadir miembro') || txt.includes('agregar participante');
                 const isAddIcon = icon === 'person-add' || icon === 'add-user' || icon === 'user-add' || icon === 'plus';
 
-                return isAddText || (isAddIcon && (txt.includes('add') || txt.includes('añadir')));
+                return isAddText || isAddIcon;
             });
 
             if (!target) return null;
             const r = target.getBoundingClientRect();
-            return { x: r.left, y: r.top, width: r.width, height: r.height };
+            return { x: r.left + r.width / 2, y: r.top + r.height / 2, width: r.width, height: r.height };
         });
 
-        if (addBtnClicked) break;
+        if (addBtnClicked) {
+            // Verificar si el modal emergente div[role="dialog"] se abrió realmente en la pantalla
+            const modalOpened = await page.waitForSelector('div[role="dialog"]', { timeout: 3000 }).then(() => true).catch(() => false);
+            if (modalOpened) break;
+            addBtnClicked = false;
+        }
         await new Promise(r => setTimeout(r, 1000));
     }
 
     if (!addBtnClicked) {
-        console.warn(`        ↳ [UI WHATSAPP] No se localizó el botón 'Add member' en el panel desplegado.`);
+        console.warn(`        ↳ [UI WHATSAPP] No se localizó o no se pudo abrir el modal 'Add member' desde el panel desplegado.`);
         return { status: 'add_button_not_found' };
     }
 
-    await new Promise(r => setTimeout(r, 2000));
+    await new Promise(r => setTimeout(r, 1500));
 
-    // 3. Escribir términos de búsqueda en el cuadro modal emergente
-    const modalInputHandle = await page.$('div[role="dialog"] div[contenteditable="true"], div[role="dialog"] input, div[contenteditable="true"]');
+    // 3. Escribir términos de búsqueda estrictamente dentro del cuadro modal emergente (div[role="dialog"])
+    const modalInputHandle = await page.$('div[role="dialog"] div[contenteditable="true"], div[role="dialog"] input');
     if (!modalInputHandle) {
-        console.warn(`        ↳ [UI WHATSAPP] No se abrió el cuadro modal emergente para buscar contactos.`);
+        console.warn(`        ↳ [UI WHATSAPP] No se localizó el campo de entrada dentro del cuadro modal emergente.`);
         return { status: 'modal_not_opened' };
     }
 
