@@ -215,46 +215,20 @@ async function añadirParticipantePorUI(page, phone) {
     await modalInputHandle.type(searchDigits, { delay: 70 });
     await new Promise(r => setTimeout(r, 3000));
 
-    // Diagnóstico de elementos en el modal tras la búsqueda
-    const modalDiag = await page.evaluate(() => {
-        const dialog = document.querySelector('div[role="dialog"]');
-        if (!dialog) return [];
-        const items = Array.from(dialog.querySelectorAll('div[role="listitem"], div[role="option"], div[tabindex]'));
-        return items.map(el => ({
-            text: (el.innerText || '').trim(),
-            aria: el.getAttribute('aria-label') || '',
-            role: el.getAttribute('role') || '',
-            height: el.getBoundingClientRect().height
-        })).filter(i => i.text && i.height > 20);
-    });
-
-    console.log('        [DIAGNÓSTICO RESULTADOS MODAL]', JSON.stringify(modalDiag.slice(0, 10)));
-
-    // 4. Seleccionar de forma estricta el primer item de tipo listitem / option en los resultados del modal
+    // 4. Seleccionar el checkbox / elemento de usuario devuelto (ignorando el título 'Contacts')
     const contactSelected = await page.evaluate(() => {
         const dialog = document.querySelector('div[role="dialog"]');
         if (!dialog) return false;
 
-        const listItems = Array.from(dialog.querySelectorAll('div[role="listitem"], div[role="option"]'));
-        for (const item of listItems) {
-            const isInput = item.querySelector('input') || item.getAttribute('role') === 'textbox';
-            const txt = (item.innerText || '').toLowerCase();
+        const candidates = Array.from(dialog.querySelectorAll('div[role="checkbox"], div[role="listitem"], div[role="option"]'));
+        const match = candidates.find(el => {
+            const txt = (el.innerText || '').trim().toLowerCase();
+            return txt !== 'contacts' && txt !== 'contactos' && txt.length > 2;
+        });
 
-            if (!isInput && !txt.includes('cancel') && !txt.includes('add member') && !txt.includes('añadir participante')) {
-                try { item.click(); return true; } catch(e) {}
-            }
+        if (match) {
+            try { match.click(); return true; } catch(e) {}
         }
-
-        // Fallback: buscar div cliqueable con altura superior a 40px en la lista
-        const candidates = Array.from(dialog.querySelectorAll('div[tabindex="-1"], div[role="button"]'));
-        for (const cand of candidates) {
-            const rect = cand.getBoundingClientRect();
-            const txt = (cand.innerText || '').toLowerCase();
-            if (rect.height > 35 && rect.height < 100 && !txt.includes('cancel') && !txt.includes('add member') && !txt.includes('search')) {
-                try { cand.click(); return true; } catch(e) {}
-            }
-        }
-
         return false;
     });
 
@@ -266,10 +240,21 @@ async function añadirParticipantePorUI(page, phone) {
 
     await new Promise(r => setTimeout(r, 1500));
 
-    // 5. Confirmar haciendo clic en el check verde de enviar
+    // 5. Hacer clic en el botón flotante verde de confirmación (checkmark/send) en la esquina inferior derecha del modal
     const confirmedCheck = await page.evaluate(() => {
-        const dialog = document.querySelector('div[role="dialog"]') || document.body;
-        const confirmBtn = dialog.querySelector('span[data-icon="checkmark-medium"], span[data-icon="send"], span[data-icon="check"], div[aria-label*="Confirm"], div[role="button"][title*="Add"], button');
+        const dialog = document.querySelector('div[role="dialog"]');
+        if (!dialog) return false;
+
+        const confirmBtn = Array.from(dialog.querySelectorAll('div[role="button"], button, span[data-icon]')).find(el => {
+            const icon = el.getAttribute('data-icon') || (el.querySelector('span[data-icon]') ? el.querySelector('span[data-icon]').getAttribute('data-icon') : '');
+            const aria = (el.getAttribute('aria-label') || '').toLowerCase();
+            
+            const isCheckIcon = icon === 'checkmark-medium' || icon === 'checkmark' || icon === 'send' || icon === 'arrow-right' || icon === 'wds-ic-send-filled';
+            const isCheckAria = aria.includes('confirm') || aria.includes('add') || aria.includes('next');
+
+            return isCheckIcon || isCheckAria;
+        });
+
         if (confirmBtn) {
             try { confirmBtn.click(); return true; } catch(e) {}
         }
@@ -282,23 +267,29 @@ async function añadirParticipantePorUI(page, phone) {
 
     await new Promise(r => setTimeout(r, 2000));
 
-    // 6. Confirmar en el modal secundario de 'Add member?'
-    await page.evaluate(() => {
+    // 6. Confirmar en la ventana modal secundaria emergente ("Add member?")
+    const finalAdded = await page.evaluate(() => {
         const dialogs = Array.from(document.querySelectorAll('div[role="dialog"]'));
         for (const d of dialogs) {
             const buttons = Array.from(d.querySelectorAll('button, div[role="button"]'));
             const addBtn = buttons.find(b => {
                 const txt = (b.innerText || b.getAttribute('aria-label') || '').toLowerCase();
-                return txt.includes('add member') || txt.includes('add participant') || txt.includes('add') || txt.includes('añadir');
+                return (txt === 'add member' || txt === 'add participant' || txt === 'add' || txt === 'añadir') && !txt.includes('cancel');
             });
             if (addBtn) {
-                try { addBtn.click(); } catch(e) {}
+                try { addBtn.click(); return true; } catch(e) {}
             }
         }
+        return false;
     });
 
     await new Promise(r => setTimeout(r, 2000));
-    return { status: 'success_ui' };
+
+    if (finalAdded || confirmedCheck) {
+        return { status: 'success_ui' };
+    }
+
+    return { status: 'ui_confirmation_failed' };
 }
 
 /**
