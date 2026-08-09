@@ -222,11 +222,18 @@ async function limpiarPantallaWhatsApp(page) {
         await new Promise(r => setTimeout(r, 400));
     } catch (e) {}
 
-    for (let i = 0; i < 3; i++) {
-        try {
-            await page.keyboard.press('Escape');
-            await new Promise(r => setTimeout(r, 200));
-        } catch (e) {}
+    // Presionar Escape solo si hay diálogos, alertas o visores abiertos para evitar cerrar el panel de info del grupo
+    const necesitaEscape = await page.evaluate(() => {
+        return !!document.querySelector('div[role="dialog"], div[role="alertdialog"], span[data-icon="x-viewer"], [aria-label*="close" i], [title*="close" i]');
+    });
+
+    if (necesitaEscape) {
+        for (let i = 0; i < 2; i++) {
+            try {
+                await page.keyboard.press('Escape');
+                await new Promise(r => setTimeout(r, 200));
+            } catch (e) {}
+        }
     }
 
     try {
@@ -270,13 +277,12 @@ async function añadirParticipantePorUI(page, phone, contactoOrName = '') {
     if (!panelAlreadyOpen) {
         console.log(`        ↳ Abriendo panel de información mediante clic en la cabecera...`);
         
-        // Intentar clic directo DOM en el título/cabecera
+        // Intentar clic directo DOM en el título/cabecera del chat activo (#main header)
         await page.evaluate(() => {
-            const headers = Array.from(document.querySelectorAll('header'));
-            const activeHeader = headers.find(h => h.getBoundingClientRect().left > 250);
+            const activeHeader = document.querySelector('#main header');
             if (activeHeader) {
-                // Hacer clic en la sección del título (suele ser el div[role="button"] que contiene el texto de información)
-                const titleArea = activeHeader.querySelector('div[role="button"], span[title]') || activeHeader;
+                // Hacer clic en la sección del título (suele ser el div[role="button"] que contiene el span con el nombre del grupo)
+                const titleArea = Array.from(activeHeader.querySelectorAll('div[role="button"]')).find(el => el.querySelector('span[title]')) || activeHeader.querySelector('span[title]') || activeHeader;
                 titleArea.click();
             }
         });
@@ -295,11 +301,10 @@ async function añadirParticipantePorUI(page, phone, contactoOrName = '') {
         if (!isOpened) {
             console.log(`        ↳ Respaldo: Aplicando clic físico CDP en el centro del título...`);
             await hacerClicFisicoCDP(page, () => {
-                const headers = Array.from(document.querySelectorAll('header'));
-                const activeHeader = headers.find(h => h.getBoundingClientRect().left > 250);
+                const activeHeader = document.querySelector('#main header');
                 if (!activeHeader) return null;
                 // Buscar el span del título del grupo
-                const titleEl = activeHeader.querySelector('span[title]') || activeHeader.querySelector('div[role="button"]') || activeHeader;
+                const titleEl = activeHeader.querySelector('span[title]') || Array.from(activeHeader.querySelectorAll('div[role="button"]')).find(el => el.querySelector('span[title]')) || activeHeader;
                 const r = titleEl.getBoundingClientRect();
                 // Retornar centro exacto del elemento título
                 return { x: r.left, y: r.top, width: r.width, height: r.height };
@@ -314,11 +319,12 @@ async function añadirParticipantePorUI(page, phone, contactoOrName = '') {
     let addBtnOpened = false;
     for (let attempt = 0; attempt < 5; attempt++) {
         const clickCoords = await page.evaluate(() => {
-            const buttons = Array.from(document.querySelectorAll('button, div[role="button"], div[role="group"] div, div[tabindex]'));
-            const target = buttons.find(b => {
-                const rect = b.getBoundingClientRect();
-                if (rect.left < 450) return false;
+            const mainChat = document.querySelector('#main');
+            const rightPane = mainChat ? mainChat.parentElement.lastElementChild : null;
+            if (!rightPane) return null;
 
+            const buttons = Array.from(rightPane.querySelectorAll('button, div[role="button"], div[tabindex]'));
+            const target = buttons.find(b => {
                 const txt = (b.innerText || b.getAttribute('aria-label') || '').toLowerCase().trim();
                 const iconEl = b.querySelector('span[data-icon]');
                 const icon = iconEl ? iconEl.getAttribute('data-icon') : (b.getAttribute('data-icon') || '');
@@ -530,10 +536,8 @@ async function añadirParticipantePorUI(page, phone, contactoOrName = '') {
     // 7. Verificación Post-Adición Estricta
     const phoneLast9 = phone.length >= 9 ? phone.slice(-9) : phone;
     const isNowPresentInDOM = await page.evaluate(async (tutor, phone9) => {
-        const rightPane = Array.from(document.querySelectorAll('div')).find(d => {
-            const rect = d.getBoundingClientRect();
-            return rect.left > 450 && rect.width > 250 && rect.height > 400;
-        });
+        const mainChat = document.querySelector('#main');
+        const rightPane = mainChat ? mainChat.parentElement.lastElementChild : null;
 
         if (rightPane) {
             for (let s = 0; s < 6; s++) {
@@ -654,10 +658,8 @@ async function buscarGrupoPorNombreSeguro(client, targetGroupName) {
         const setPhone = new Set();
         const setName = new Set();
         
-        const rightPane = Array.from(document.querySelectorAll('div')).find(d => {
-            const rect = d.getBoundingClientRect();
-            return rect.left > 450 && rect.width > 250 && rect.height > 400;
-        });
+        const mainChat = document.querySelector('#main');
+        const rightPane = mainChat ? mainChat.parentElement.lastElementChild : null;
 
         if (rightPane) {
             for (let s = 0; s < 12; s++) {
