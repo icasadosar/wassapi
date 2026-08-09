@@ -258,26 +258,32 @@ async function añadirParticipantePorUI(page, phone, tutorName = '') {
         console.log(`        ↳ El panel de información del grupo ya se encuentra desplegado.`);
     }
 
-    // 2. Clic físico de ratón en 'Add member' / 'Add participant' en el panel derecho (rect.left > 450)
-    const addBtnClicked = await hacerClicFisicoCDP(page, () => {
-        const elements = Array.from(document.querySelectorAll('div[role="button"], button, span, div'));
-        const target = elements.find(el => {
-            const rect = el.getBoundingClientRect();
-            if (rect.left < 450) return false;
+    // 2. Clic físico de ratón en 'Add member' / 'Add participant' en el panel derecho (rect.left > 450) con reintento
+    let addBtnClicked = false;
+    for (let attempt = 0; attempt < 5; attempt++) {
+        addBtnClicked = await hacerClicFisicoCDP(page, () => {
+            const elements = Array.from(document.querySelectorAll('div[role="button"], button, span, div'));
+            const target = elements.find(el => {
+                const rect = el.getBoundingClientRect();
+                if (rect.left < 450) return false;
 
-            const txt = (el.innerText || el.getAttribute('aria-label') || el.getAttribute('title') || '').toLowerCase();
-            const icon = el.getAttribute('data-icon') || (el.querySelector('span[data-icon]') ? el.querySelector('span[data-icon]').getAttribute('data-icon') : '');
+                const txt = (el.innerText || el.getAttribute('aria-label') || el.getAttribute('title') || '').toLowerCase();
+                const icon = el.getAttribute('data-icon') || (el.querySelector('span[data-icon]') ? el.querySelector('span[data-icon]').getAttribute('data-icon') : '');
 
-            const isAddText = txt.includes('add member') || txt.includes('add participant') || txt.includes('add members') || txt.includes('añadir participante') || txt.includes('añadir miembro') || txt.includes('agregar participante');
-            const isAddIcon = icon === 'person-add' || icon === 'add-user' || icon === 'user-add' || icon === 'plus';
+                const isAddText = txt.includes('add member') || txt.includes('add participant') || txt.includes('add members') || txt.includes('añadir participante') || txt.includes('añadir miembro') || txt.includes('agregar participante');
+                const isAddIcon = icon === 'person-add' || icon === 'add-user' || icon === 'user-add' || icon === 'plus';
 
-            return isAddText || (isAddIcon && (txt.includes('add') || txt.includes('añadir')));
+                return isAddText || (isAddIcon && (txt.includes('add') || txt.includes('añadir')));
+            });
+
+            if (!target) return null;
+            const r = target.getBoundingClientRect();
+            return { x: r.left, y: r.top, width: r.width, height: r.height };
         });
 
-        if (!target) return null;
-        const r = target.getBoundingClientRect();
-        return { x: r.left, y: r.top, width: r.width, height: r.height };
-    });
+        if (addBtnClicked) break;
+        await new Promise(r => setTimeout(r, 1000));
+    }
 
     if (!addBtnClicked) {
         console.warn(`        ↳ [UI WHATSAPP] No se localizó el botón 'Add member' en el panel desplegado.`);
@@ -302,11 +308,21 @@ async function añadirParticipantePorUI(page, phone, tutorName = '') {
     let contactSelected = false;
 
     for (const term of searchTerms) {
-        await modalInputHandle.click();
+        // Limpieza nativa y robusta de contenteditable en todos los SO (macOS / Linux / Windows)
+        await page.evaluate(el => {
+            el.focus();
+            el.innerText = '';
+            el.textContent = '';
+            el.innerHTML = '';
+            const range = document.createRange();
+            range.selectNodeContents(el);
+            const sel = window.getSelection();
+            sel.removeAllRanges();
+            sel.addRange(range);
+            const ev = new Event('input', { bubbles: true });
+            el.dispatchEvent(ev);
+        }, modalInputHandle);
 
-        await page.keyboard.down('Meta');
-        await page.keyboard.press('A');
-        await page.keyboard.up('Meta');
         await page.keyboard.press('Backspace');
         await new Promise(r => setTimeout(r, 200));
 
