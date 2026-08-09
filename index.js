@@ -195,34 +195,41 @@ async function añadirParticipantePorUI(page, phone) {
 
     await new Promise(r => setTimeout(r, 2000));
 
-    // 3. Escribir el número de teléfono en el buscador del cuadro modal emergente
+    // 3. Escribir los últimos 9 dígitos del teléfono en el buscador del cuadro modal emergente
     const modalInputHandle = await page.$('div[role="dialog"] div[contenteditable="true"], div[role="dialog"] input, div[contenteditable="true"]');
     if (!modalInputHandle) {
         console.warn(`        ↳ [UI WHATSAPP] No se abrió el cuadro modal emergente para buscar contactos.`);
         return { status: 'modal_not_opened' };
     }
 
+    const searchDigits = phone.length >= 9 ? phone.slice(-9) : phone;
     await modalInputHandle.click();
-    await page.keyboard.type(phone, { delay: 60 });
+    await page.keyboard.type(searchDigits, { delay: 70 });
     await new Promise(r => setTimeout(r, 2500));
 
-    // 4. Seleccionar el contacto devuelto en la lista del modal
+    // 4. Seleccionar el primer resultado retornado en el diálogo emergente
     const contactSelected = await page.evaluate((targetPhone) => {
-        const dialog = document.querySelector('div[role="dialog"]') || document.body;
-        const items = Array.from(dialog.querySelectorAll('div[role="listitem"], div[role="option"], div[tabindex]'));
+        const dialog = document.querySelector('div[role="dialog"]');
+        if (!dialog) return false;
+
+        const items = Array.from(dialog.querySelectorAll('div[role="listitem"], div[role="option"], div[tabindex="-1"], div[role="button"]'));
         const last9 = targetPhone.length >= 9 ? targetPhone.slice(-9) : targetPhone;
-        
-        for (const item of items) {
-            const txt = item.innerText || '';
-            if (txt.includes(last9) || txt.includes('Add') || txt.includes('Añadir')) {
-                try { item.click(); return true; } catch(e) {}
-            }
+
+        const match = items.find(el => {
+            const isInput = el.querySelector('input') || el.getAttribute('role') === 'textbox';
+            const rect = el.getBoundingClientRect();
+            const txt = el.innerText || '';
+            return !isInput && rect.height > 25 && (txt.includes(last9) || txt.length > 2);
+        });
+
+        if (match) {
+            try { match.click(); return true; } catch(e) {}
         }
         return false;
     }, phone);
 
     if (!contactSelected) {
-        console.warn(`        ↳ [UI WHATSAPP] El número ${phone} no apareció en los resultados del cuadro modal.`);
+        console.warn(`        ↳ [UI WHATSAPP] El contacto (${searchDigits}) no apareció en los resultados del cuadro modal.`);
         await page.keyboard.press('Escape');
         return { status: 'contact_not_found_in_modal' };
     }
@@ -349,24 +356,44 @@ async function buscarGrupoPorNombreSeguro(client, targetGroupName) {
         await new Promise(r => setTimeout(r, 2000));
     } catch (e) {}
 
-    // Extraer participantes visibles en el DOM del panel derecho (rect.left > 450)
-    const domParticipants = await page.evaluate(() => {
+    // Extraer participantes realizando desplazamientos en el panel de info del grupo
+    const domParticipants = await page.evaluate(async () => {
         const set = new Set();
-        const nodes = Array.from(document.querySelectorAll('span, div, p'));
-        nodes
-            .filter(n => {
-                const rect = n.getBoundingClientRect();
-                return rect.left > 450;
-            })
-            .forEach(n => {
-                const txt = n.innerText ? n.innerText.trim() : '';
-                if (txt.match(/^\+?\d[\d\s-]{8,}\d$/)) {
-                    const clean = txt.replace(/\D/g, '');
-                    if (clean.length >= 9) {
-                        set.add(`${clean}@c.us`);
-                    }
-                }
+        
+        // Localizar panel de info del grupo a la derecha
+        const rightPane = Array.from(document.querySelectorAll('div')).find(d => {
+            const rect = d.getBoundingClientRect();
+            return rect.left > 450 && rect.width > 250 && rect.height > 400;
+        });
+
+        if (rightPane) {
+            // Si existe botón de "Ver todos" / "View all", hacer clic
+            const viewAllBtn = Array.from(rightPane.querySelectorAll('div[role="button"], button, span')).find(el => {
+                const txt = (el.innerText || '').toLowerCase();
+                return txt.includes('view all') || txt.includes('ver todos') || txt.includes('more members');
             });
+            if (viewAllBtn) {
+                try { viewAllBtn.click(); } catch(e) {}
+                await new Promise(r => setTimeout(r, 1000));
+            }
+
+            // Scroll progresivo para cargar miembros del DOM
+            for (let s = 0; s < 8; s++) {
+                rightPane.scrollTop += 500;
+                await new Promise(r => setTimeout(r, 150));
+            }
+        }
+
+        const nodes = Array.from(document.querySelectorAll('span, div, p'));
+        nodes.forEach(n => {
+            const txt = n.innerText ? n.innerText.trim() : '';
+            if (txt.match(/^\+?\d[\d\s-]{8,}\d$/)) {
+                const clean = txt.replace(/\D/g, '');
+                if (clean.length >= 9) {
+                    set.add(`${clean}@c.us`);
+                }
+            }
+        });
         return Array.from(set);
     });
 
