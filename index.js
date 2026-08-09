@@ -401,7 +401,8 @@ async function añadirParticipantePorUI(page, phone, contactoOrName = '') {
                 const txt = (el.innerText || '').trim().toLowerCase();
                 if (!txt) return false;
 
-                const isExcluded = txt === 'contacts' || txt === 'contactos' || txt === 'search' || txt === 'buscar' || txt.includes('add member') || txt.includes('add members') || txt.includes('cancel');
+                // Usar igualdad exacta para no descartar contactos reales que incluyan esas palabras en su descripción
+                const isExcluded = txt === 'contacts' || txt === 'contactos' || txt === 'search' || txt === 'buscar' || txt === 'add member' || txt === 'add members' || txt === 'cancel';
                 if (isExcluded) return false;
 
                 const hasPhone = txt.includes(phoneFull) || txt.includes(phone9);
