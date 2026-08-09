@@ -103,9 +103,14 @@ npm run dry-run:google
 ```
 
 ### Modo Producción (Añadir contactos reales)
-Ejecuta el script principal:
+Para ejecutar la sincronización real de WhatsApp:
 ```bash
 npm start
+```
+
+Para ejecutar la sincronización real de WhatsApp **y Google Contacts**:
+```bash
+npm run start:google
 ```
 
 ---
