@@ -140,7 +140,7 @@ async function limpiarPantallaWhatsApp(page) {
  * Añade un contacto al grupo abierto mediante la interfaz gráfica de WhatsApp Web
  */
 async function añadirParticipantePorUI(page, phone) {
-    console.log(`        ↳ [UI WHATSAPP] Buscando botón 'Añadir participante' en pantalla...`);
+    console.log(`        ↳ [UI WHATSAPP] Desplegando información del grupo en pantalla...`);
     
     // 1. Abrir panel de información del grupo si no está abierto
     await page.evaluate(() => {
@@ -149,14 +149,31 @@ async function añadirParticipantePorUI(page, phone) {
             try { header.click(); } catch(e) {}
         }
     });
-    await new Promise(r => setTimeout(r, 1000));
+    await new Promise(r => setTimeout(r, 1500));
 
-    // 2. Localizar y hacer clic en 'Añadir participante'
+    // Diagnóstico de elementos en el panel de información del grupo
+    const diagInfo = await page.evaluate(() => {
+        const elements = Array.from(document.querySelectorAll('div[role="button"], button, span[data-icon], div[title]'));
+        return elements.map(el => ({
+            text: (el.innerText || '').trim(),
+            aria: el.getAttribute('aria-label') || '',
+            icon: el.getAttribute('data-icon') || (el.querySelector('span[data-icon]') ? el.querySelector('span[data-icon]').getAttribute('data-icon') : '')
+        })).filter(i => (i.text && i.text.length < 50) || i.aria || i.icon);
+    });
+
+    console.log('        [DIAGNÓSTICO BOTONES UI] Elementos localizados:', JSON.stringify(diagInfo.slice(0, 15)));
+
+    // 2. Localizar y hacer clic en 'Añadir participante' / 'Add member' / 'Add participant'
     const addBtnClicked = await page.evaluate(() => {
         const clickable = Array.from(document.querySelectorAll('div[role="button"], button, span, div'));
         const target = clickable.find(el => {
             const txt = (el.innerText || el.getAttribute('aria-label') || el.getAttribute('title') || '').toLowerCase();
-            return txt.includes('añadir participante') || txt.includes('add participant') || txt.includes('agregar participante');
+            const icon = el.getAttribute('data-icon') || (el.querySelector('span[data-icon]') ? el.querySelector('span[data-icon]').getAttribute('data-icon') : '');
+
+            const isAddText = txt.includes('add member') || txt.includes('add participant') || txt.includes('añadir participante') || txt.includes('añadir miembro') || txt.includes('agregar participante') || txt.includes('agregar miembro');
+            const isAddIcon = icon === 'person-add' || icon === 'add-user' || icon === 'user-add' || icon === 'plus';
+
+            return isAddText || (isAddIcon && txt.includes('add'));
         });
 
         if (target) {
@@ -166,7 +183,7 @@ async function añadirParticipantePorUI(page, phone) {
     });
 
     if (!addBtnClicked) {
-        console.warn(`        ↳ [UI WHATSAPP] No se localizó el botón 'Añadir participante' en la interfaz.`);
+        console.warn(`        ↳ [UI WHATSAPP] No se localizó el botón 'Add member / Añadir participante' en la interfaz.`);
         return { status: 'add_button_not_found' };
     }
 
@@ -188,7 +205,7 @@ async function añadirParticipantePorUI(page, phone) {
         const items = Array.from(document.querySelectorAll('div[role="listitem"], div[role="option"], span'));
         for (const item of items) {
             const txt = item.innerText || '';
-            if (txt.includes('Añadir') || txt.includes('Add') || txt.length > 3) {
+            if (txt.includes('Add') || txt.includes('Añadir') || txt.length > 3) {
                 try { item.click(); return true; } catch(e) {}
             }
         }
@@ -200,7 +217,7 @@ async function añadirParticipantePorUI(page, phone) {
 
         // 5. Confirmar haciendo clic en el check verde
         await page.evaluate(() => {
-            const confirmBtn = document.querySelector('span[data-icon="checkmark-medium"], span[data-icon="send"], div[aria-label*="Confirmar"], div[aria-label*="Check"], button');
+            const confirmBtn = document.querySelector('span[data-icon="checkmark-medium"], span[data-icon="send"], div[aria-label*="Confirm"], div[aria-label*="Check"], button');
             if (confirmBtn) {
                 try { confirmBtn.click(); } catch(e) {}
             }
@@ -212,7 +229,7 @@ async function añadirParticipantePorUI(page, phone) {
             const btns = Array.from(document.querySelectorAll('button, div[role="button"]'));
             const finalAdd = btns.find(b => {
                 const txt = (b.innerText || '').toLowerCase();
-                return txt === 'añadir participante' || txt === 'add participant' || txt === 'añadir';
+                return txt === 'add member' || txt === 'add participant' || txt === 'añadir participante' || txt === 'add' || txt === 'añadir';
             });
             if (finalAdd) {
                 try { finalAdd.click(); } catch(e) {}
@@ -344,7 +361,9 @@ async function buscarGrupoPorNombreSeguro(client, targetGroupName) {
                 try {
                     console.log(`        ↳ Intentando adición mediante API nativa whatsapp-web.js...`);
                     const res = await nativeGroupChat.addParticipants(jids);
-                    return res;
+                    if (res && (Array.isArray(res) || res.status === '200' || res.status === 200)) {
+                        return { status: 'success_native', response: res };
+                    }
                 } catch (ne) {
                     console.warn(`        ↳ Fallo en API nativa, ejecutando automatización visual UI:`, ne.message);
                 }
@@ -467,8 +486,15 @@ async function iniciarProceso() {
                 } else {
                     try {
                         const result = await grupo.addParticipants([contacto.jid]);
-                        console.log(`        ↳ [ÉXITO WHATSAPP] Añadido correctamente. Respuesta:`, JSON.stringify(result));
-                        stats.añadidosWhatsApp++;
+                        const isSuccess = result && (result.status === 'success_ui' || result.status === 'success_native' || Array.isArray(result));
+
+                        if (isSuccess) {
+                            console.log(`        ↳ [ÉXITO WHATSAPP] Añadido correctamente. Respuesta:`, JSON.stringify(result));
+                            stats.añadidosWhatsApp++;
+                        } else {
+                            console.warn(`        ↳ [FALLO WHATSAPP] No se pudo añadir el contacto a WhatsApp. Resultado:`, JSON.stringify(result));
+                            stats.fallidosWhatsApp++;
+                        }
                     } catch (err) {
                         console.error(`        ↳ [ERROR WHATSAPP] No se pudo añadir a ${contacto.phone}:`, err.message);
                         stats.fallidosWhatsApp++;
