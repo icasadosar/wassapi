@@ -140,20 +140,21 @@ async function limpiarPantallaWhatsApp(page) {
  * Añade un contacto al grupo abierto mediante la interfaz gráfica de WhatsApp Web
  */
 async function añadirParticipantePorUI(page, phone) {
-    console.log(`        ↳ [UI WHATSAPP] Desplegando información del grupo en pantalla...`);
+    console.log(`        ↳ [UI WHATSAPP] Desplegando información del grupo (#main header)...`);
     
-    // 1. Abrir panel de información del grupo si no está abierto
+    // 1. Abrir panel de información del grupo haciendo clic específicamente en #main header (panel derecho del chat activo)
     await page.evaluate(() => {
-        const header = document.querySelector('header div[role="button"], header div[title], header span[title], header');
-        if (header) {
-            try { header.click(); } catch(e) {}
+        const groupHeader = document.querySelector('#main header div[role="button"], #main header span[title], #main header');
+        if (groupHeader) {
+            try { groupHeader.click(); } catch(e) {}
         }
     });
-    await new Promise(r => setTimeout(r, 1500));
+    await new Promise(r => setTimeout(r, 2000));
 
     // Diagnóstico de elementos en el panel de información del grupo
     const diagInfo = await page.evaluate(() => {
-        const elements = Array.from(document.querySelectorAll('div[role="button"], button, span[data-icon], div[title]'));
+        const rightPane = document.querySelector('#main + div, div[role="region"]') || document.body;
+        const elements = Array.from(rightPane.querySelectorAll('div[role="button"], button, span[data-icon], div[title]'));
         return elements.map(el => ({
             text: (el.innerText || '').trim(),
             aria: el.getAttribute('aria-label') || '',
@@ -161,19 +162,20 @@ async function añadirParticipantePorUI(page, phone) {
         })).filter(i => (i.text && i.text.length < 50) || i.aria || i.icon);
     });
 
-    console.log('        [DIAGNÓSTICO BOTONES UI] Elementos localizados:', JSON.stringify(diagInfo.slice(0, 15)));
+    console.log('        [DIAGNÓSTICO PANEL DERECHO GROUP INFO] Elementos localizados:', JSON.stringify(diagInfo.slice(0, 15)));
 
-    // 2. Localizar y hacer clic en 'Añadir participante' / 'Add member' / 'Add participant'
+    // 2. Localizar y hacer clic en 'Add member' / 'Add participant' / 'Añadir participante'
     const addBtnClicked = await page.evaluate(() => {
-        const clickable = Array.from(document.querySelectorAll('div[role="button"], button, span, div'));
+        const rightPane = document.querySelector('#main + div, div[role="region"]') || document.body;
+        const clickable = Array.from(rightPane.querySelectorAll('div[role="button"], button, span, div'));
         const target = clickable.find(el => {
             const txt = (el.innerText || el.getAttribute('aria-label') || el.getAttribute('title') || '').toLowerCase();
             const icon = el.getAttribute('data-icon') || (el.querySelector('span[data-icon]') ? el.querySelector('span[data-icon]').getAttribute('data-icon') : '');
 
-            const isAddText = txt.includes('add member') || txt.includes('add participant') || txt.includes('añadir participante') || txt.includes('añadir miembro') || txt.includes('agregar participante') || txt.includes('agregar miembro');
-            const isAddIcon = icon === 'person-add' || icon === 'add-user' || icon === 'user-add' || icon === 'plus';
+            const isAddText = txt.includes('add member') || txt.includes('add participant') || txt.includes('add members') || txt.includes('añadir participante') || txt.includes('añadir miembro') || txt.includes('agregar participante');
+            const isAddIcon = icon === 'person-add' || icon === 'add-user' || icon === 'user-add';
 
-            return isAddText || (isAddIcon && txt.includes('add'));
+            return isAddText || isAddIcon;
         });
 
         if (target) {
@@ -183,64 +185,79 @@ async function añadirParticipantePorUI(page, phone) {
     });
 
     if (!addBtnClicked) {
-        console.warn(`        ↳ [UI WHATSAPP] No se localizó el botón 'Add member / Añadir participante' en la interfaz.`);
+        console.warn(`        ↳ [UI WHATSAPP] No se localizó el botón 'Add member / Añadir participante' en el panel de información del grupo.`);
         return { status: 'add_button_not_found' };
     }
 
-    await new Promise(r => setTimeout(r, 1500));
+    await new Promise(r => setTimeout(r, 2000));
 
-    // 3. Escribir el número de teléfono en el buscador flotante
-    const inputSelector = 'div[contenteditable="true"], input[type="text"], input[role="textbox"]';
-    try {
-        const modalInput = await page.$(inputSelector);
-        if (modalInput) {
-            await modalInput.click();
-            await page.keyboard.type(phone, { delay: 50 });
-            await new Promise(r => setTimeout(r, 1500));
-        }
-    } catch (e) {}
+    // 3. Escribir el número de teléfono en el buscador del cuadro modal emergente
+    const modalInputHandle = await page.$('div[role="dialog"] div[contenteditable="true"], div[role="dialog"] input, div[contenteditable="true"]');
+    if (!modalInputHandle) {
+        console.warn(`        ↳ [UI WHATSAPP] No se abrió el cuadro modal emergente para buscar contactos.`);
+        return { status: 'modal_not_opened' };
+    }
 
-    // 4. Seleccionar el contacto devuelto en la lista flotante
-    const contactSelected = await page.evaluate(() => {
-        const items = Array.from(document.querySelectorAll('div[role="listitem"], div[role="option"], span'));
+    await modalInputHandle.click();
+    await page.keyboard.type(phone, { delay: 60 });
+    await new Promise(r => setTimeout(r, 2000));
+
+    // 4. Seleccionar el contacto devuelto en la lista del modal
+    const contactSelected = await page.evaluate((targetPhone) => {
+        const dialog = document.querySelector('div[role="dialog"]') || document.body;
+        const items = Array.from(dialog.querySelectorAll('div[role="listitem"], div[role="option"], div[tabindex]'));
+        
         for (const item of items) {
             const txt = item.innerText || '';
-            if (txt.includes('Add') || txt.includes('Añadir') || txt.length > 3) {
+            const last9 = targetPhone.length >= 9 ? targetPhone.slice(-9) : targetPhone;
+            if (txt.includes(last9) || txt.includes('Add') || txt.includes('Añadir')) {
                 try { item.click(); return true; } catch(e) {}
             }
         }
         return false;
-    });
+    }, phone);
 
-    if (contactSelected) {
-        await new Promise(r => setTimeout(r, 1000));
-
-        // 5. Confirmar haciendo clic en el check verde
-        await page.evaluate(() => {
-            const confirmBtn = document.querySelector('span[data-icon="checkmark-medium"], span[data-icon="send"], div[aria-label*="Confirm"], div[aria-label*="Check"], button');
-            if (confirmBtn) {
-                try { confirmBtn.click(); } catch(e) {}
-            }
-        });
-        await new Promise(r => setTimeout(r, 1500));
-
-        // 6. Confirmar en el popup final de añadir
-        await page.evaluate(() => {
-            const btns = Array.from(document.querySelectorAll('button, div[role="button"]'));
-            const finalAdd = btns.find(b => {
-                const txt = (b.innerText || '').toLowerCase();
-                return txt === 'add member' || txt === 'add participant' || txt === 'añadir participante' || txt === 'add' || txt === 'añadir';
-            });
-            if (finalAdd) {
-                try { finalAdd.click(); } catch(e) {}
-            }
-        });
-        await new Promise(r => setTimeout(r, 1000));
-
-        return { status: 'success_ui' };
+    if (!contactSelected) {
+        console.warn(`        ↳ [UI WHATSAPP] El número ${phone} no apareció en los resultados del cuadro modal.`);
+        await page.keyboard.press('Escape');
+        return { status: 'contact_not_found_in_modal' };
     }
 
-    return { status: 'contact_not_found_ui' };
+    await new Promise(r => setTimeout(r, 1500));
+
+    // 5. Confirmar haciendo clic en el check verde de enviar
+    const confirmedCheck = await page.evaluate(() => {
+        const dialog = document.querySelector('div[role="dialog"]') || document.body;
+        const confirmBtn = dialog.querySelector('span[data-icon="checkmark-medium"], span[data-icon="send"], span[data-icon="check"], div[aria-label*="Confirm"], div[role="button"][title*="Add"], button');
+        if (confirmBtn) {
+            try { confirmBtn.click(); return true; } catch(e) {}
+        }
+        return false;
+    });
+
+    if (!confirmedCheck) {
+        await page.keyboard.press('Enter');
+    }
+
+    await new Promise(r => setTimeout(r, 2000));
+
+    // 6. Confirmar en el modal secundario de 'Add member?'
+    await page.evaluate(() => {
+        const dialogs = Array.from(document.querySelectorAll('div[role="dialog"]'));
+        for (const d of dialogs) {
+            const buttons = Array.from(d.querySelectorAll('button, div[role="button"]'));
+            const addBtn = buttons.find(b => {
+                const txt = (b.innerText || b.getAttribute('aria-label') || '').toLowerCase();
+                return txt.includes('add member') || txt.includes('add participant') || txt.includes('add') || txt.includes('añadir');
+            });
+            if (addBtn) {
+                try { addBtn.click(); } catch(e) {}
+            }
+        }
+    });
+
+    await new Promise(r => setTimeout(r, 2000));
+    return { status: 'success_ui' };
 }
 
 /**
@@ -316,21 +333,22 @@ async function buscarGrupoPorNombreSeguro(client, targetGroupName) {
         console.warn('    ↳ Advertencia obteniendo chats nativos:', e.message);
     }
 
-    // Abrir la cabecera del grupo para mostrar la información del grupo y los participantes en pantalla
+    // Abrir específicamente la cabecera del chat activo (#main header) para desplegar el panel derecho de Group Info
     try {
         await page.evaluate(() => {
-            const header = document.querySelector('header div[role="button"], header div[title], header span[title], header');
-            if (header) {
-                try { header.click(); } catch(e) {}
+            const groupHeader = document.querySelector('#main header div[role="button"], #main header span[title], #main header');
+            if (groupHeader) {
+                try { groupHeader.click(); } catch(e) {}
             }
         });
-        await new Promise(r => setTimeout(r, 1500));
+        await new Promise(r => setTimeout(r, 2000));
     } catch (e) {}
 
-    // Extraer participantes visibles en el DOM
+    // Extraer participantes visibles en el DOM del panel derecho
     const domParticipants = await page.evaluate(() => {
         const set = new Set();
-        const nodes = document.querySelectorAll('span, div, p');
+        const rightPane = document.querySelector('#main + div, div[role="region"]') || document.body;
+        const nodes = rightPane.querySelectorAll('span, div, p');
         nodes.forEach(n => {
             const txt = n.innerText ? n.innerText.trim() : '';
             if (txt.match(/^\+?\d[\d\s-]{8,}\d$/)) {
@@ -343,7 +361,7 @@ async function buscarGrupoPorNombreSeguro(client, targetGroupName) {
         return Array.from(set);
     });
 
-    console.log(`    ↳ Participantes detectados en la interfaz visual: ${domParticipants.length}`);
+    console.log(`    ↳ Participantes detectados en la interfaz visual del panel derecho: ${domParticipants.length}`);
 
     // Combinar participantes nativos si están disponibles
     let allParticipants = domParticipants.map(jid => ({ id: { _serialized: jid } }));
