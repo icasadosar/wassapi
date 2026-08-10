@@ -323,6 +323,18 @@ wppconnect.create({
     disableWelcome: true,
     autoClose: 0, // Desactivar el cierre automático de 60s por inactividad al escanear QR
     logQR: true,
+    catchQR: (base64Qrimg, asciiQR, attempts, feedback) => {
+        try {
+            const matches = base64Qrimg.match(/^data:([A-Za-z-+\/]+);base64,(.+)$/);
+            if (matches && matches.length === 3) {
+                const buffer = Buffer.from(matches[2], 'base64');
+                fs.writeFileSync(path.resolve('./qr.png'), buffer);
+                console.log('\n[CÓDIGO QR] Guardado en qr.png en la raíz del proyecto. ¡Abre este archivo para escanearlo!\n');
+            }
+        } catch (e) {
+            console.error('Error al guardar el código QR en archivo:', e);
+        }
+    },
     browserArgs: [
         '--no-sandbox',
         '--disable-setuid-sandbox',
