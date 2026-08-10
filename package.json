@@ -19,10 +19,9 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
+    "@wppconnect-team/wppconnect": "^2.2.6",
     "csv-parser": "^3.0.0",
     "dotenv": "^16.4.5",
-    "googleapis": "^174.0.1",
-    "qrcode-terminal": "^0.12.0",
-    "whatsapp-web.js": "^1.26.0"
+    "googleapis": "^174.0.1"
   }
 }
