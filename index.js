@@ -195,30 +195,52 @@ async function iniciarProceso(client) {
         console.log(`Se encontraron ${contactos.length} contactos válidos en el CSV.\n`);
 
         console.log(`Buscando grupo: "${GROUP_NAME}"...`);
-        const chats = await client.listChats();
-        console.log(`    ↳ Total chats devueltos por listChats(): ${chats.length}`);
-        
-        const targetNameLower = GROUP_NAME.trim().toLowerCase();
+        let chats = [];
         let targetGroup = null;
 
-        for (const c of chats) {
-            if (!c.isGroup) continue;
-            const name = (c.name || c.formattedTitle || '').trim();
-            const subject = (c.subject || '').trim();
+        for (let attempt = 0; attempt < 6; attempt++) {
+            chats = await client.listChats();
+            console.log(`    ↳ Consulta de chats (intento ${attempt + 1}): devueltos ${chats.length} chats.`);
             
-            console.log(`        ↳ [GRUPO ENCONTRADO EN WHATSAPP] name="${name}", subject="${subject}" (ID: ${c.id ? c.id._serialized : c.id})`);
+            const targetNameLower = GROUP_NAME.trim().toLowerCase();
+            for (const c of chats) {
+                if (!c.isGroup) continue;
+                const name = (c.name || c.formattedTitle || '').trim();
+                const subject = (c.subject || '').trim();
 
-            const matchName = name && (name.toLowerCase().includes(targetNameLower) || targetNameLower.includes(name.toLowerCase()));
-            const matchSubject = subject && (subject.toLowerCase().includes(targetNameLower) || targetNameLower.includes(subject.toLowerCase()));
+                const matchName = name && (name.toLowerCase().includes(targetNameLower) || targetNameLower.includes(name.toLowerCase()));
+                const matchSubject = subject && (subject.toLowerCase().includes(targetNameLower) || targetNameLower.includes(subject.toLowerCase()));
 
-            if (matchName || matchSubject) {
-                targetGroup = c;
+                if (matchName || matchSubject) {
+                    targetGroup = c;
+                    break;
+                }
+            }
+
+            if (targetGroup) break;
+            if (attempt < 5) {
+                console.log('        ↳ Esperando 5 segundos para que WhatsApp Web cargue más chats...');
+                await new Promise(r => setTimeout(r, 5000));
             }
         }
 
         if (!targetGroup) {
             console.error(`\n[ERROR CRÍTICO] No se encontró el grupo "${GROUP_NAME}". Verifique el nombre en .env`);
+            
+            const groupsFound = chats.filter(c => c.isGroup);
+            if (groupsFound.length > 0) {
+                console.log(`    ↳ Grupos detectados en tu cuenta (${groupsFound.length}):`);
+                groupsFound.forEach(g => {
+                    const name = g.name || g.formattedTitle || g.subject || 'Sin nombre';
+                    console.log(`       - "${name}" (ID: ${g.id ? (g.id._serialized || g.id) : 'Desconocido'})`);
+                });
+            } else {
+                console.log('    ↳ No se detectó ningún grupo en tu cuenta de WhatsApp.');
+            }
+
+            console.log('Cerrando sesión de forma segura para conservar la vinculación...');
             await client.close();
+            await new Promise(r => setTimeout(r, 3000));
             process.exit(1);
         }
 
