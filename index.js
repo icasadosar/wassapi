@@ -180,8 +180,26 @@ async function iniciarProceso(client) {
         console.log(`Se encontraron ${contactos.length} contactos válidos en el CSV.\n`);
 
         console.log(`Buscando grupo: "${GROUP_NAME}"...`);
-        const chats = await client.listChats({ onlyGroups: true });
-        const targetGroup = chats.find(c => c.isGroup && (c.name.trim().toLowerCase().includes(GROUP_NAME.trim().toLowerCase()) || GROUP_NAME.trim().toLowerCase().includes(c.name.trim().toLowerCase())));
+        const chats = await client.listChats();
+        console.log(`    ↳ Total chats devueltos por listChats(): ${chats.length}`);
+        
+        const targetNameLower = GROUP_NAME.trim().toLowerCase();
+        let targetGroup = null;
+
+        for (const c of chats) {
+            if (!c.isGroup) continue;
+            const name = (c.name || c.formattedTitle || '').trim();
+            const subject = (c.subject || '').trim();
+            
+            console.log(`        ↳ [GRUPO ENCONTRADO EN WHATSAPP] name="${name}", subject="${subject}" (ID: ${c.id ? c.id._serialized : c.id})`);
+
+            const matchName = name && (name.toLowerCase().includes(targetNameLower) || targetNameLower.includes(name.toLowerCase()));
+            const matchSubject = subject && (subject.toLowerCase().includes(targetNameLower) || targetNameLower.includes(subject.toLowerCase()));
+
+            if (matchName || matchSubject) {
+                targetGroup = c;
+            }
+        }
 
         if (!targetGroup) {
             console.error(`\n[ERROR CRÍTICO] No se encontró el grupo "${GROUP_NAME}". Verifique el nombre en .env`);
@@ -189,8 +207,8 @@ async function iniciarProceso(client) {
             process.exit(1);
         }
 
-        const groupId = targetGroup.id._serialized;
-        console.log(`Grupo encontrado: "${targetGroup.name}" (ID: ${groupId})`);
+        const groupId = targetGroup.id ? (targetGroup.id._serialized || targetGroup.id) : '';
+        console.log(`Grupo encontrado: "${targetGroup.name || targetGroup.formattedTitle || targetGroup.subject}" (ID: ${groupId})`);
 
         console.log('Obteniendo participantes actuales del grupo...');
         const metadata = await client.getGroupMetadata(groupId);
