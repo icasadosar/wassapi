@@ -145,6 +145,21 @@ function cargarContactosDesdeCSV(filePath) {
  */
 async function iniciarProceso(client) {
     console.log('\nCliente de WhatsApp Web listo y conectado (WPPConnect).');
+    
+    // Esperar a que la sincronización inicial de WhatsApp Web esté lista antes de operar
+    console.log('Esperando a que WhatsApp Web complete la sincronización inicial de chats...');
+    let isReady = false;
+    for (let attempts = 0; attempts < 90; attempts++) {
+        isReady = await client.isMainReady();
+        if (isReady) break;
+        await new Promise(r => setTimeout(r, 2000));
+    }
+    if (!isReady) {
+        console.warn('Advertencia: WhatsApp Web no ha completado la sincronización, continuando de todos modos...');
+    } else {
+        console.log('¡WhatsApp Web sincronizado y listo para operar!');
+    }
+
     if (IS_DRY_RUN) {
         console.log('*** MODO SIMULACIÓN (--dry-run) ACTIVADO: No se modificarán datos reales ***\n');
     }
