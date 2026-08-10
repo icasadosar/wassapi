@@ -6,3 +6,13 @@ credentials.json
 token.json
 whatsapp_screen.png
 *.png
+
+# Ignorar todos los CSV excepto los de ejemplo
+*.csv
+!*example.csv
+
+# Ignorar base de datos local de sincronización
+sync_state.json
+
+# Ignorar tokens y sesión de WPPConnect
+tokens/
