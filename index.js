@@ -21,6 +21,7 @@ const DEFAULT_COUNTRY_CODE = process.env.DEFAULT_COUNTRY_CODE || '34';
 const MIN_DELAY_MS = parseInt(process.env.MIN_DELAY_MS || '5000', 10);
 const MAX_DELAY_MS = parseInt(process.env.MAX_DELAY_MS || '10000', 10);
 const IS_DRY_RUN = process.env.DRY_RUN === 'true' || process.argv.includes('--dry-run');
+const USER_PHONE = process.env.USER_PHONE || '';
 
 // Opciones de Google Contacts
 const SYNC_GOOGLE_CONTACTS = process.env.SYNC_GOOGLE_CONTACTS === 'true' || process.argv.includes('--sync-google-contacts');
@@ -322,8 +323,10 @@ wppconnect.create({
     updatesLog: false,
     disableWelcome: true,
     autoClose: 0, // Desactivar el cierre automático de 60s por inactividad al escanear QR
-    logQR: true,
+    ...(USER_PHONE ? { phoneNumber: USER_PHONE } : {}),
+    logQR: !USER_PHONE,
     catchQR: (base64Qrimg, asciiQR, attempts, feedback) => {
+        if (USER_PHONE) return;
         try {
             const matches = base64Qrimg.match(/^data:([A-Za-z-+\/]+);base64,(.+)$/);
             if (matches && matches.length === 3) {
@@ -334,6 +337,16 @@ wppconnect.create({
         } catch (e) {
             console.error('Error al guardar el código QR en archivo:', e);
         }
+    },
+    catchLinkCode: (code) => {
+        console.log('\n======================================================');
+        console.log(` CÓDIGO DE VINCULACIÓN: ${code}`);
+        console.log('======================================================');
+        console.log(' Abre WhatsApp en tu móvil:');
+        console.log(' Ajustes -> Dispositivos vinculados -> Vincular dispositivo');
+        console.log(' -> Vincular con el número de teléfono en su lugar');
+        console.log(` Escribe el código: ${code}`);
+        console.log('======================================================\n');
     },
     browserArgs: [
         '--no-sandbox',
