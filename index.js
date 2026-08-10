@@ -248,9 +248,14 @@ async function iniciarProceso(client) {
         console.log(`Grupo encontrado: "${targetGroup.name || targetGroup.formattedTitle || targetGroup.subject}" (ID: ${groupId})`);
 
         console.log('Obteniendo participantes actuales del grupo...');
-        const metadata = await client.getGroupMetadata(groupId);
+        const members = await client.getGroupMembers(groupId);
         const participantesActuales = new Set(
-            metadata.participants.map(p => p.id._serialized || p.id)
+            members.map(p => {
+                if (p.id && typeof p.id === 'object') {
+                    return p.id._serialized || p.id.user || '';
+                }
+                return p.id || '';
+            }).filter(Boolean)
         );
 
         console.log(`Participantes detectados en el grupo: ${participantesActuales.size}.\n`);
