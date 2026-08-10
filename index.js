@@ -321,6 +321,7 @@ wppconnect.create({
     headless: true,
     updatesLog: false,
     disableWelcome: true,
+    autoClose: 0, // Desactivar el cierre automático de 60s por inactividad al escanear QR
     logQR: true,
     browserArgs: [
         '--no-sandbox',
